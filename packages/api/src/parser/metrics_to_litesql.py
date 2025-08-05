@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from pathlib import Path
 from typing import Union, Dict, Any
 
@@ -12,7 +13,7 @@ def create_schema(db_path: Path) -> None:
         sqlite3.Error: If there is an error creating the schema.
     
     See:
-        `packages\api\src\storage\schema.png` for the schema diagram.
+        `packages\\api\\src\\storage\\schema.png` for the schema diagram.
     """
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -84,3 +85,46 @@ def create_schema(db_path: Path) -> None:
     """)
     conn.commit()
     conn.close()
+    
+def load_save_metadata(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
+    """Load save metadata into the database.
+
+    Args:
+        conn (sqlite3.Connection): SQLite connection object.
+        filename (str): The name of the save file.
+        metadata (Dict[str, Any]): Metadata dictionary containing save details.
+    """
+    cur = conn.cursor()
+    
+
+    cur.execute("""
+        INSERT INTO Saves (save_id, played_country, saved_at, in_game_date)
+        VALUES (?, ?, ?, ?)
+    """, (
+        savedata.get("playthrough_id"),                 # save_id
+        savedata.get("Metadata", []).get("name", ""),   # played_country
+        savedata.get("real_date"),                      # saved_at
+        savedata.get("game_date")                       # in_game_date
+    ))
+    conn.commit()
+
+def load_countries(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
+    """Load country data into the database.
+
+    Args:
+        conn (sqlite3.Connection): SQLite connection object.
+        savedata (Dict[str, Any]): The save data dictionary.
+    """
+    cur = conn.cursor()
+
+    for country in savedata.get("country_manager", []).get("database", []):
+        cur.execute("""
+            INSERT OR IGNORE INTO Countries (country_tag, save_id, name)
+            VALUES (?, ?, ?)
+        """, (
+            country,                   # country_tag
+            savedata.get("playthrough_id"),              # save_id
+            country.get("definition")                      # name
+        ))
+    
+    conn.commit()
