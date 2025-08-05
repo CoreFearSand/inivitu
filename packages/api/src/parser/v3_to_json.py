@@ -11,7 +11,7 @@ def v3_to_json(
     save_file: Union[str, Path],
     rakaly_path: Optional[Union[str, Path]] = None
 ) -> dict[str, Any]:
-    """melts a v3 save file to json using rakaly
+    """melts a v3 save file to JSON using rakaly
 
     Args:
         save_file (Union[str, Path]): The path to the v3 file to convert.
@@ -20,7 +20,7 @@ def v3_to_json(
     Returns:
         dict[str, Any]: The JSON representation of the v3 file.
 
-    ## Throws:
+    Raises:
         FileNotFoundError: If the specified v3 file or rakaly executable is not found
         RuntimeError: If the rakaly command fails or the output cannot be decoded as JSON.
     """
