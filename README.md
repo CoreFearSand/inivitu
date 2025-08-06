@@ -8,6 +8,7 @@ still a work in progress currently done
 
 ✔ create database
 
-- parse json save static data into database (ongoing)
+✔ parse json save static data into database
+
 - parse wars into database
-- create frontend for database 
+- create frontend for database (ongoing)
