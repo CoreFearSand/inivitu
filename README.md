@@ -10,5 +10,6 @@ still a work in progress currently done
 
 ✔ parse json save static data into database
 
-- parse wars into database
 - create frontend for database (ongoing)
+- parse wars from save to database
+- parse goods from save to database
