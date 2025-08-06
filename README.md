@@ -9,5 +9,6 @@ still a work in progress currently done
 ✔ create database
 
 - parse json save static data into database (ongoing)
+    - changed from weakly graphs to monthly graphs in order to simplify and quicken dev time
 - parse wars into database
 - create frontend for database 
