@@ -1,3 +1,12 @@
+"""
+This module provides functions to create the SQLite schema for the Victoria 3 dashboard
+and to load various types of data into the database, such as save metadata, country data,
+and country metrics. It is designed to work with the SQLite database used in the project.
+
+still need to implement trade goods and war metrics.
+"""
+# packages/api/src/parser/metrics_to_litesql.py
+
 import sqlite3
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -30,9 +39,9 @@ def create_schema(db_path: Path) -> None:
     );
 
     CREATE TABLE IF NOT EXISTS Countries (
-        country_tag  CHAR(3),
+        country_tag  INTEGER,
         save_id      TEXT,
-        name         TEXT,
+        name         CHAR(3),
         PRIMARY KEY (country_tag, save_id),
         FOREIGN KEY (save_id) REFERENCES Saves(save_id)
     );
@@ -85,7 +94,7 @@ def create_schema(db_path: Path) -> None:
     conn.commit()
     conn.close()
     
-def load_save_metadata(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
+def save_metadata(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
     """Load save metadata into the database.
 
     Args:
@@ -107,7 +116,7 @@ def load_save_metadata(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> No
     ))
     conn.commit()
 
-def load_countries(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
+def save_countries(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
     """Load country data into the database.
 
     Args:
@@ -128,7 +137,7 @@ def load_countries(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
     
     conn.commit()
     
-def country_metrics(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
+def save_country_metrics(conn: sqlite3.Connection, savedata: Dict[str, Any]) -> None:
     """Load country metrics into the database.
 
     Args:

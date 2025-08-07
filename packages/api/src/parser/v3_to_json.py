@@ -1,3 +1,10 @@
+"""
+This module provides a function to convert a Victoria 3 v3 save file to JSON format
+using the `rakaly` tool. It handles the conversion process, including error handling for
+various issues that may arise during the conversion.
+"""
+# packages/api/src/parser/v3_to_json.py
+
 import subprocess
 import json
 import shutil
@@ -63,9 +70,4 @@ def v3_to_json(
     except json.JSONDecodeError as je:
         raise RuntimeError(f"Failed to decode JSON from rakaly output:\n{je}")
     
-
-# test usage
-if __name__ == "__main__":
-    out = v3_to_json("C:\\Users\\kaare\\OneDrive\\Dokumenter\\Paradox Interactive\\Victoria 3\\save games\\autosave.v3")
-    print(json.dumps(out, indent=2, ensure_ascii=False))
     
