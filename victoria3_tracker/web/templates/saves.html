@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}Processed Saves - Victoria 3 Game Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Processed Saves</h2>
+            <div class="btn-group">
+                <button class="btn btn-outline-primary" onclick="refreshSaves()">
+                    <i class="fas fa-refresh"></i> Refresh
+                </button>
+                <button class="btn btn-outline-success" onclick="showExportModal('saves')">
+                    <i class="fas fa-download"></i> Export
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Save Files</h5>
+                    <small class="text-muted">{{ saves|length }} saves processed</small>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="saves-loading" class="text-center" style="display: none;">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                
+                <div id="saves-container">
+                    {% if saves %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th>Game Date</th>
+                                    <th>Countries</th>
+                                    <th>Metrics</th>
+                                    <th>File Size</th>
+                                    <th>Processing Time</th>
+                                    <th>Processed At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for save in saves %}
+                                <tr>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <i class="fas fa-file-alt me-2 text-muted"></i>
+                                            <div>
+                                                <strong>{{ save.filename }}</strong><br>
+                                                <small class="text-muted">{{ save.save_id[:8] }}...</small>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-info">{{ save.in_game_date or '-' }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-success">{{ save.country_count or 0 }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-primary">{{ save.metric_count or 0 }}</span>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">{{ format_file_size(save.file_size) if save.file_size else '-' }}</small>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">
+                                            {% if save.processing_time_ms %}
+                                                {{ "%.1f"|format(save.processing_time_ms / 1000) }}s
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </small>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">{{ save.saved_at[:19] if save.saved_at else '-' }}</small>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center text-muted py-5">
+                        <i class="fas fa-save fa-3x mb-3"></i>
+                        <h5>No Saves Processed</h5>
+                        <p>No save files have been processed yet. The system will automatically process new save files when they are detected.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Processing Statistics -->
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Processing Statistics</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="processing-stats-chart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">File Size Distribution</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="file-size-chart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let processingStatsChart = null;
+let fileSizeChart = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadProcessingStats();
+    loadFileSizeDistribution();
+});
+
+async function loadProcessingStats() {
+    try {
+        const data = await getStats();
+        
+        const canvas = document.getElementById('processing-stats-chart');
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Destroy existing chart
+        if (processingStatsChart) {
+            processingStatsChart.destroy();
+        }
+        
+        // Get processing summary from stats
+        const processingSummary = data.processing_summary || {};
+        const labels = Object.keys(processingSummary);
+        const values = Object.values(processingSummary);
+        
+        if (labels.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No processing data available', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+        
+        processingStatsChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels.map(label => label.charAt(0).toUpperCase() + label.slice(1)),
+                datasets: [{
+                    data: values,
+                    backgroundColor: [
+                        '#28a745', // success - green
+                        '#dc3545', // error - red
+                        '#ffc107', // skipped - yellow
+                        '#17a2b8'  // other - blue
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                return `${context.label}: ${context.parsed} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error loading processing stats:', error);
+    }
+}
+
+async function loadFileSizeDistribution() {
+    try {
+        const data = await getSaves({ limit: 100 });
+        
+        const canvas = document.getElementById('file-size-chart');
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Destroy existing chart
+        if (fileSizeChart) {
+            fileSizeChart.destroy();
+        }
+        
+        if (!data.saves || data.saves.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No file size data available', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+        
+        // Group files by size ranges
+        const sizeRanges = {
+            '< 1MB': 0,
+            '1-10MB': 0,
+            '10-50MB': 0,
+            '50-100MB': 0,
+            '> 100MB': 0
+        };
+        
+        data.saves.forEach(save => {
+            const sizeMB = (save.file_size || 0) / (1024 * 1024);
+            
+            if (sizeMB < 1) {
+                sizeRanges['< 1MB']++;
+            } else if (sizeMB < 10) {
+                sizeRanges['1-10MB']++;
+            } else if (sizeMB < 50) {
+                sizeRanges['10-50MB']++;
+            } else if (sizeMB < 100) {
+                sizeRanges['50-100MB']++;
+            } else {
+                sizeRanges['> 100MB']++;
+            }
+        });
+        
+        fileSizeChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: Object.keys(sizeRanges),
+                datasets: [{
+                    label: 'Number of Files',
+                    data: Object.values(sizeRanges),
+                    backgroundColor: '#36A2EB',
+                    borderColor: '#36A2EB',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error loading file size distribution:', error);
+    }
+}
+
+function refreshSaves() {
+    window.location.reload();
+}
+
+// Helper function for file size formatting (if not available globally)
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+</script>
+{% endblock %}
+
+{# Template filter for file size formatting #}
+{% set format_file_size = formatFileSize %}

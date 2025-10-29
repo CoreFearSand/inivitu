@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration - Victoria 3 Game Tracker{% endblock %}
+
+{% block extra_head %}
+<style>
+.config-section {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.config-form {
+    max-width: 800px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #333;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+}
+
+.form-group .help-text {
+    font-size: 12px;
+    color: #666;
+    margin-top: 5px;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: auto;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-block;
+    margin-right: 10px;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #545b62;
+}
+
+.btn-success {
+    background-color: #28a745;
+    color: white;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    color: white;
+}
+
+.alert {
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+}
+
+.alert-success {
+    color: #155724;
+    background-color: #d4edda;
+    border-color: #c3e6cb;
+}
+
+.alert-danger {
+    color: #721c24;
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+.alert-warning {
+    color: #856404;
+    background-color: #fff3cd;
+    border-color: #ffeaa7;
+}
+
+.alert-info {
+    color: #0c5460;
+    background-color: #d1ecf1;
+    border-color: #bee5eb;
+}
+
+.validation-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.status-icon {
+    font-size: 18px;
+}
+
+.status-valid {
+    color: #28a745;
+}
+
+.status-invalid {
+    color: #dc3545;
+}
+
+.config-info {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.directory-browser {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.directory-browser input {
+    flex: 1;
+}
+
+.loading {
+    display: none;
+    color: #007bff;
+}
+
+.form-actions {
+    border-top: 1px solid #dee2e6;
+    padding-top: 20px;
+    margin-top: 30px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1>Configuration Management</h1>
+        <p>Manage Victoria 3 Game Tracker settings and preferences</p>
+    </div>
+
+    <!-- Validation Status -->
+    <div class="config-section">
+        <div class="validation-status">
+            {% if validation_status %}
+                <span class="status-icon status-valid">✅</span>
+                <span>Configuration is valid and ready to use</span>
+            {% else %}
+                <span class="status-icon status-invalid">❌</span>
+                <span>Configuration has validation errors</span>
+            {% endif %}
+        </div>
+        
+        <div class="config-info">
+            <strong>Configuration File:</strong> {{ config_path }}
+        </div>
+    </div>
+
+    <!-- Alert Messages -->
+    <div id="alert-container"></div>
+
+    <!-- Configuration Form -->
+    <div class="config-section">
+        <h2>Application Settings</h2>
+        
+        <form id="config-form" class="config-form">
+            <!-- Save Directory -->
+            <div class="form-group">
+                <label for="save_directory">Victoria 3 Save Directory</label>
+                <div class="directory-browser">
+                    <input type="text" id="save_directory" name="save_directory" 
+                           value="{{ config.save_directory }}" required>
+                    <button type="button" class="btn btn-secondary" id="validate-dir-btn">
+                        Validate
+                    </button>
+                </div>
+                <div class="help-text">
+                    Path to your Victoria 3 save games directory. Common locations:<br>
+                    • C:\Users\[username]\Documents\Paradox Interactive\Victoria 3\save games<br>
+                    • C:\Users\[username]\OneDrive\Documents\Paradox Interactive\Victoria 3\save games
+                </div>
+            </div>
+
+            <!-- Web Port -->
+            <div class="form-group">
+                <label for="web_port">Web Interface Port</label>
+                <input type="number" id="web_port" name="web_port" 
+                       value="{{ config.web_port }}" min="1" max="65535" required>
+                <div class="help-text">
+                    Port number for the web interface (1-65535). Default: 8080
+                </div>
+            </div>
+
+            <!-- Polling Interval -->
+            <div class="form-group">
+                <label for="polling_interval">File Monitoring Interval (seconds)</label>
+                <input type="number" id="polling_interval" name="polling_interval" 
+                       value="{{ config.polling_interval }}" min="0.1" max="3600" step="0.1" required>
+                <div class="help-text">
+                    How often to check for new save files (0.1-3600 seconds). Default: 5
+                </div>
+            </div>
+
+            <!-- Log Level -->
+            <div class="form-group">
+                <label for="log_level">Log Level</label>
+                <select id="log_level" name="log_level" required>
+                    <option value="DEBUG" {% if config.log_level == 'DEBUG' %}selected{% endif %}>DEBUG - Detailed information</option>
+                    <option value="INFO" {% if config.log_level == 'INFO' %}selected{% endif %}>INFO - General information</option>
+                    <option value="WARNING" {% if config.log_level == 'WARNING' %}selected{% endif %}>WARNING - Warning messages only</option>
+                    <option value="ERROR" {% if config.log_level == 'ERROR' %}selected{% endif %}>ERROR - Error messages only</option>
+                    <option value="CRITICAL" {% if config.log_level == 'CRITICAL' %}selected{% endif %}>CRITICAL - Critical errors only</option>
+                </select>
+                <div class="help-text">
+                    Logging verbosity level. DEBUG provides the most detail.
+                </div>
+            </div>
+
+            <!-- Max File Size -->
+            <div class="form-group">
+                <label for="max_file_size_mb">Maximum File Size (MB)</label>
+                <input type="number" id="max_file_size_mb" name="max_file_size_mb" 
+                       value="{{ config.max_file_size_mb }}" min="1" max="1000" required>
+                <div class="help-text">
+                    Maximum save file size to process (1-1000 MB). Default: 100
+                </div>
+            </div>
+
+            <!-- Processing Timeout -->
+            <div class="form-group">
+                <label for="processing_timeout_seconds">Processing Timeout (seconds)</label>
+                <input type="number" id="processing_timeout_seconds" name="processing_timeout_seconds" 
+                       value="{{ config.processing_timeout_seconds }}" min="5" max="300" required>
+                <div class="help-text">
+                    Maximum time to spend processing a single save file (5-300 seconds). Default: 30
+                </div>
+            </div>
+
+            <!-- WebSocket Enable -->
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="enable_websocket" name="enable_websocket" 
+                           {% if config.enable_websocket %}checked{% endif %}>
+                    <label for="enable_websocket">Enable Real-time Updates (WebSocket)</label>
+                </div>
+                <div class="help-text">
+                    Enable real-time updates in the web interface when new saves are processed. (Does not work yet)
+                </div>
+            </div>
+
+            <!-- Map Features Enable -->
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="enable_map_features" name="enable_map_features" 
+                           {% if config.enable_map_features %}checked{% endif %}>
+                    <label for="enable_map_features">Enable Map Visualization (Experimental)</label>
+                </div>
+                <div class="help-text">
+                    Enable experimental map visualization features. May impact performance. (not yet added)
+                </div>
+            </div>
+
+            <!-- Default Country Count -->
+            <div class="form-group">
+                <label for="default_country_count">Default Country Count for Trends</label>
+                <input type="number" id="default_country_count" name="default_country_count" 
+                       value="{{ config.default_country_count }}" min="1" max="50" required>
+                <div class="help-text">
+                    Default number of countries to display in trend charts (1-50). Default: 10
+                </div>
+            </div>
+
+            <!-- Form Actions -->
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <span class="loading">Saving...</span>
+                    <span class="btn-text">Save Configuration</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="reset-btn">
+                    Reset to Current
+                </button>
+                <button type="button" class="btn btn-secondary" id="validate-btn">
+                    Validate Only
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Configuration Help -->
+    <div class="config-section">
+        <h2>Configuration Help</h2>
+        <div class="help-content">
+            <h3>Save Directory</h3>
+            <p>This is the most important setting. The tracker monitors this directory for new Victoria 3 save files (.v3 extension). Make sure:</p>
+            <ul>
+                <li>The directory exists and is accessible</li>
+                <li>Victoria 3 is configured to save autosaves to this location</li>
+                <li>The tracker has read permissions for this directory</li>
+            </ul>
+
+            <h3>Performance Settings</h3>
+            <p>Adjust these settings based on your system performance:</p>
+            <ul>
+                <li><strong>Polling Interval:</strong> Lower values detect new saves faster but use more CPU</li>
+                <li><strong>Max File Size:</strong> Larger saves take longer to process</li>
+                <li><strong>Processing Timeout:</strong> Increase for very large save files</li>
+            </ul>
+
+            <h3>Troubleshooting</h3>
+            <p>If you're having issues:</p>
+            <ul>
+                <li>Set log level to DEBUG for detailed information</li>
+                <li>Check that rakaly.exe is available and working</li>
+                <li>Ensure the web port is not used by another application</li>
+                <li>Verify Victoria 3 save directory permissions</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/config.js') }}"></script>
+{% endblock %}

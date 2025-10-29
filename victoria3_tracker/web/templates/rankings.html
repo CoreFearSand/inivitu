@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+
+{% block title %}Rankings - Victoria 3 Game Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Country Rankings</h2>
+            <div class="d-flex gap-2">
+                <select class="form-select" id="metric-selector" style="width: auto;">
+                    {% for metric in metrics %}
+                    <option value="{{ metric.name }}" {% if metric.name == current_metric %}selected{% endif %}>
+                        {{ metric.display_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary" onclick="refreshRankings()">
+                        <i class="fas fa-refresh"></i> Refresh
+                    </button>
+                    <button class="btn btn-outline-success" onclick="showExportModal('rankings', {showMetricSelector: true})">
+                        <i class="fas fa-download"></i> Export
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Rankings Table -->
+    <div class="col-lg-8 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Top Countries</h5>
+            </div>
+            <div class="card-body">
+                <div id="rankings-loading" class="text-center" style="display: none;">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                
+                <div id="rankings-table-container">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Country</th>
+                                    <th>Tag</th>
+                                    <th class="text-end" id="metric-header">{{ current_metric.upper() }}</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rankings-tbody">
+                                {% for country in rankings %}
+                                <tr>
+                                    <td>
+                                        <span class="badge {% if loop.index <= 3 %}bg-warning{% else %}bg-light text-dark{% endif %}">
+                                            {{ loop.index }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <strong>{{ country.name or country.country_tag }}</strong>
+                                    </td>
+                                    <td>
+                                        <code>{{ country.country_tag }}</code>
+                                    </td>
+                                    <td class="text-end">
+                                        <strong>{{ "%.2f"|format(country.amount) if country.amount else '-' }}</strong>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    {% if not rankings %}
+                    <div class="text-center text-muted py-5">
+                        <i class="fas fa-trophy fa-3x mb-3"></i>
+                        <h5>No Rankings Available</h5>
+                        <p>No ranking data available for the selected metric.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Rankings Chart -->
+    <div class="col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Top 10 Chart</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="rankings-chart" height="400"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Metric Comparison -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Metric Comparison</h5>
+                    <button class="btn btn-sm btn-outline-primary" onclick="loadMetricComparison()">
+                        <i class="fas fa-refresh"></i> Update
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="comparison-chart" height="100"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let rankingsChart = null;
+let comparisonChart = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    setupRankingsPage();
+    loadRankingsChart('{{ current_metric }}');
+    loadMetricComparison();
+});
+
+function setupRankingsPage() {
+    // Metric selector change handler
+    const metricSelector = document.getElementById('metric-selector');
+    if (metricSelector) {
+        metricSelector.addEventListener('change', function() {
+            loadRankings(this.value);
+        });
+    }
+}
+
+async function loadRankings(metric) {
+    const loading = document.getElementById('rankings-loading');
+    const container = document.getElementById('rankings-table-container');
+    const tbody = document.getElementById('rankings-tbody');
+    const header = document.getElementById('metric-header');
+    
+    try {
+        loading.style.display = 'block';
+        container.style.display = 'none';
+        
+        const data = await getRankings(metric, { limit: 50 });
+        
+        // Update table header
+        if (header) {
+            header.textContent = metric.toUpperCase();
+        }
+        
+        // Update table body
+        let html = '';
+        if (data.rankings && data.rankings.length > 0) {
+            data.rankings.forEach((country, index) => {
+                const badgeClass = index < 3 ? 'bg-warning' : 'bg-light text-dark';
+                html += `
+                    <tr>
+                        <td>
+                            <span class="badge ${badgeClass}">${index + 1}</span>
+                        </td>
+                        <td>
+                            <strong>${country.name || country.country_tag}</strong>
+                        </td>
+                        <td>
+                            <code>${country.country_tag}</code>
+                        </td>
+                        <td class="text-end">
+                            <strong>${formatNumber(country.amount)}</strong>
+                        </td>
+                    </tr>
+                `;
+            });
+        } else {
+            html = `
+                <tr>
+                    <td colspan="4" class="text-center text-muted py-3">
+                        No data available for ${metric}
+                    </td>
+                </tr>
+            `;
+        }
+        
+        tbody.innerHTML = html;
+        
+        // Update chart
+        loadRankingsChart(metric);
+        
+        loading.style.display = 'none';
+        container.style.display = 'block';
+        
+    } catch (error) {
+        console.error('Error loading rankings:', error);
+        loading.style.display = 'none';
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" class="text-center text-danger py-3">
+                    Error loading rankings data
+                </td>
+            </tr>
+        `;
+        container.style.display = 'block';
+    }
+}
+
+async function loadRankingsChart(metric) {
+    try {
+        const data = await getRankings(metric, { limit: 10 });
+        
+        const canvas = document.getElementById('rankings-chart');
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Destroy existing chart
+        if (rankingsChart) {
+            rankingsChart.destroy();
+        }
+        
+        if (!data.rankings || data.rankings.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No data available', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+        
+        const labels = data.rankings.map(country => country.name || country.country_tag);
+        const values = data.rankings.map(country => country.amount);
+        
+        rankingsChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: metric.toUpperCase(),
+                    data: values,
+                    backgroundColor: [
+                        '#FFD700', '#C0C0C0', '#CD7F32', // Gold, Silver, Bronze
+                        '#4BC0C0', '#36A2EB', '#FFCE56', '#FF6384', 
+                        '#9966FF', '#FF9F40', '#FF6384'
+                    ],
+                    borderColor: '#fff',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.label}: ${formatNumber(context.parsed.y)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 0
+                        }
+                    },
+                    y: {
+                        ticks: {
+                            callback: function(value) {
+                                return formatNumber(value);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error loading rankings chart:', error);
+    }
+}
+
+async function loadMetricComparison() {
+    try {
+        // Get top 5 countries for multiple metrics
+        const metrics = ['gdp', 'population', 'prestige', 'military_size'];
+        const comparisonData = {};
+        
+        for (const metric of metrics) {
+            const data = await getRankings(metric, { limit: 5 });
+            comparisonData[metric] = data.rankings || [];
+        }
+        
+        const canvas = document.getElementById('comparison-chart');
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Destroy existing chart
+        if (comparisonChart) {
+            comparisonChart.destroy();
+        }
+        
+        // Get unique countries from all metrics
+        const allCountries = new Set();
+        Object.values(comparisonData).forEach(rankings => {
+            rankings.forEach(country => allCountries.add(country.country_tag));
+        });
+        
+        const countries = Array.from(allCountries).slice(0, 10); // Limit to 10 countries
+        
+        const datasets = metrics.map((metric, index) => {
+            const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0'];
+            const data = countries.map(countryTag => {
+                const country = comparisonData[metric].find(c => c.country_tag === countryTag);
+                return country ? country.amount : 0;
+            });
+            
+            return {
+                label: metric.toUpperCase(),
+                data: data,
+                backgroundColor: colors[index] + '80',
+                borderColor: colors[index],
+                borderWidth: 2
+            };
+        });
+        
+        comparisonChart = new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: countries,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top'
+                    }
+                },
+                scales: {
+                    r: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return formatNumber(value);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error loading metric comparison:', error);
+    }
+}
+
+function refreshRankings() {
+    const metric = document.getElementById('metric-selector').value;
+    loadRankings(metric);
+}
+</script>
+{% endblock %}
