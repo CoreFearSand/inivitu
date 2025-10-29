@@ -1,4 +1,4 @@
-# Victoria 3 Game Tracker
+# inivitu
 
 A system for automatically monitoring Victoria 3 autosave files, parsing game data, and providing web-based visualization of game metrics over time.
 
