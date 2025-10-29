@@ -89,11 +89,11 @@ victoria3_tracker/
 ├── main.py              # Main application entry point
 ├── config.py            # Configuration management
 ├── logging_config.py    # Logging setup
-├── database/            # Database layer (to be implemented)
-├── parser/              # Save file parsing (to be implemented)
-├── monitor/             # File monitoring (to be implemented)
-├── web/                 # Web interface (to be implemented)
-└── api/                 # REST API (to be implemented)
+├── database/            # Database layer
+├── parser/              # Save file parsing
+├── monitor/             # File monitoring
+├── web/                 # Web interface
+└── api/                 # REST API
 ```
 
 ## Development
