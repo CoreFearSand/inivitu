@@ -21,7 +21,7 @@ python victoria3_tracker.py --install
 ### Manual Installation
 1. **Prerequisites**:
    - Python 3.8 or higher
-   - rakaly.exe ([download here](https://github.com/rakaly/rakaly/releases))
+   - rakaly.exe ([download here](https://github.com/rakaly/cli/releases/))
 
 2. **Install Dependencies**:
    ```bash
