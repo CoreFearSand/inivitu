@@ -7,8 +7,8 @@ A system for automatically monitoring Victoria 3 autosave files, parsing game da
 - **Automatic Monitoring**: Watches your Victoria 3 save directory for new autosave files
 - **Data Parsing**: Converts save files to structured data using rakaly.exe
 - **Database Storage**: Stores game metrics in SQLite with full data integrity
+   - please note that a save takes around 10 seconds to run through rakaly and if in that time another save is made the saving of that save will fail
 - **Web Dashboard**: Interactive charts and visualizations for game analysis
-- **Real-time Updates**: Live updates when new saves are processed
 
 ## Quick Start
 

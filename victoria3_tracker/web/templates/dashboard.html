@@ -1,5 +1,6 @@
 {% extends "base.html" %} {% block title %}Dashboard - Victoria 3 Game Tracker{%
 endblock %} {% block content %}
+
 <div class="row">
   <!-- Statistics Cards -->
   <div class="col-12 mb-4">
@@ -83,6 +84,7 @@ endblock %} {% block content %}
           class="btn btn-sm btn-outline-primary"
           onclick="refreshRecentSaves()"
         >
+
           <i class="fas fa-refresh"></i> Refresh
         </button>
       </div>
@@ -165,11 +167,11 @@ endblock %} {% block content %}
             <option value="culture_amount">Cultural Diversity</option>
             <option value="power_projection">Power Projection</option>
           </select>
-          <div class="input-group input-group-sm" style="width: 120px">
-            <span class="input-group-text">Top</span>
+          <div class="d-flex align-items-stretch country-count-container" style="width: 300px;">
+            <label for="country-count" class="country-count-label">Top</label>
             <input
               type="number"
-              class="form-control"
+              class="form-control form-control-sm"
               id="country-count"
               value="10"
               min="1"
@@ -182,29 +184,21 @@ endblock %} {% block content %}
               class="btn btn-sm btn-outline-primary"
               onclick="refreshTrends()"
             >
+              <img src="{{ url_for('static', filename='image/refresh.png') }}" alt="Refresh data" style="width:16px; height:16px; margin-right:4px;" />
               <i class="fas fa-refresh"></i>
             </button>
             <button
               class="btn btn-sm btn-outline-success"
               onclick="showExportModal('trends', {showMetricSelector: true})"
             >
+              <img src="{{ url_for('static', filename='image/diskette.png') }}" alt="Save data" style="width:16px; height:16px; margin-right:4px;" />
               <i class="fas fa-download"></i>
             </button>
           </div>
         </div>
       </div>
       <div class="card-body">
-        <div
-          class="chart-container"
-          style="
-            position: relative;
-            height: 100%;
-            width: 100%;
-            overflow: hidden;
-          "
-        >
-          <canvas id="trends-chart"></canvas>
-        </div>
+        <canvas id="trends-chart"></canvas>
       </div>
     </div>
   </div>
@@ -496,7 +490,6 @@ endblock %} {% block content %}
       const canvas = document.getElementById("trends-chart");
       const container = canvas.parentElement;
       container.innerHTML =
-        '<div class="text-center text-muted p-4"><i class="fas fa-chart-line fa-3x mb-3"></i><br>Select a campaign to view trends</div>' +
         '<div class="chart-container" style="position: relative; height: 400px; width: 100%; overflow: hidden;"><canvas id="trends-chart" style="display: none;"></canvas></div>';
     }
   }
@@ -785,10 +778,7 @@ endblock %} {% block content %}
 
     if (datasets.length === 0) {
       console.warn("No datasets to display");
-      const container = canvas.parentElement;
-      container.innerHTML =
-        '<div class="text-center text-muted p-4">No trend data available for selected campaign</div>' +
-        '<div class="chart-container" style="position: relative; height: 400px; width: 100%; overflow: hidden;"><canvas id="trends-chart" style="display: none;"></canvas></div>';
+      cardBody.innerHTML = '<div class="text-center text-muted p-4">No trend data available for selected campaign</div>';
       return;
     }
 
