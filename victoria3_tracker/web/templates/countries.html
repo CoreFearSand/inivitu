@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Countries - Victoria 3 Game Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Countries</h2>
+            <div class="d-flex gap-2">
+                <input type="text" class="form-control" id="country-search" placeholder="Search countries..." style="width: 250px;">
+                <button class="btn btn-outline-primary" onclick="refreshCountries()">
+                    <i class="fas fa-refresh"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">All Countries</h5>
+                    <div class="d-flex gap-2 align-items-center">
+                        <label class="form-label mb-0 me-2">Sort by:</label>
+                        <select class="form-select form-select-sm" id="sort-select" style="width: auto;">
+                            <option value="name">Name</option>
+                            <option value="latest_date">Latest Date</option>
+                            <option value="save_count">Save Count</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="countries-loading" class="text-center" style="display: none;">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                
+                <div id="countries-container">
+                    <div class="row" id="countries-grid">
+                        {% for country in countries %}
+                        <div class="col-md-6 col-lg-4 mb-3 country-card" 
+                             data-name="{{ country.name|lower }}" 
+                             data-tag="{{ country.country_tag|lower }}">
+                            <div class="card h-100 {% if country.is_player_country %}border-primary{% endif %}">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <h6 class="card-title mb-0">{{ country.name or country.country_tag }}</h6>
+                                        {% if country.is_player_country %}
+                                        <span class="badge bg-primary">Player</span>
+                                        {% endif %}
+                                    </div>
+                                    <p class="card-text">
+                                        <small class="text-muted">
+                                            <strong>Tag:</strong> {{ country.country_tag }}<br>
+                                            <strong>Latest:</strong> {{ country.latest_date or '-' }}<br>
+                                            <strong>Saves:</strong> {{ country.save_count or 0 }}
+                                        </small>
+                                    </p>
+                                    <a href="{{ url_for('country_detail', country_tag=country.country_tag) }}" 
+                                       class="btn btn-sm btn-outline-primary">View Details</a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    {% if not countries %}
+                    <div class="text-center text-muted py-5">
+                        <i class="fas fa-flag fa-3x mb-3"></i>
+                        <h5>No Countries Found</h5>
+                        <p>No countries have been processed yet. Process some save files to see countries here.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    setupCountriesPage();
+});
+
+function setupCountriesPage() {
+    // Search functionality
+    const searchInput = document.getElementById('country-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', debounce(function() {
+            filterCountries(this.value);
+        }, 300));
+    }
+    
+    // Sort functionality
+    const sortSelect = document.getElementById('sort-select');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', function() {
+            sortCountries(this.value);
+        });
+    }
+}
+
+function filterCountries(searchTerm) {
+    const cards = document.querySelectorAll('.country-card');
+    const term = searchTerm.toLowerCase();
+    
+    cards.forEach(card => {
+        const name = card.getAttribute('data-name') || '';
+        const tag = card.getAttribute('data-tag') || '';
+        
+        if (name.includes(term) || tag.includes(term)) {
+            card.style.display = 'block';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+function sortCountries(sortBy) {
+    const container = document.getElementById('countries-grid');
+    const cards = Array.from(container.querySelectorAll('.country-card'));
+    
+    cards.sort((a, b) => {
+        let aValue, bValue;
+        
+        switch (sortBy) {
+            case 'name':
+                aValue = a.getAttribute('data-name') || '';
+                bValue = b.getAttribute('data-name') || '';
+                return aValue.localeCompare(bValue);
+                
+            case 'latest_date':
+                aValue = a.querySelector('.card-text').textContent.match(/Latest:\s*([^\n]*)/)?.[1] || '';
+                bValue = b.querySelector('.card-text').textContent.match(/Latest:\s*([^\n]*)/)?.[1] || '';
+                return bValue.localeCompare(aValue); // Descending
+                
+            case 'save_count':
+                aValue = parseInt(a.querySelector('.card-text').textContent.match(/Saves:\s*(\d+)/)?.[1] || '0');
+                bValue = parseInt(b.querySelector('.card-text').textContent.match(/Saves:\s*(\d+)/)?.[1] || '0');
+                return bValue - aValue; // Descending
+                
+            default:
+                return 0;
+        }
+    });
+    
+    // Re-append sorted cards
+    cards.forEach(card => container.appendChild(card));
+}
+
+function refreshCountries() {
+    window.location.reload();
+}
+</script>
+{% endblock %}

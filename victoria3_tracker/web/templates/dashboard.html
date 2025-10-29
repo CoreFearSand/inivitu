@@ -1,0 +1,880 @@
+{% extends "base.html" %} {% block title %}Dashboard - Victoria 3 Game Tracker{%
+endblock %} {% block content %}
+<div class="row">
+  <!-- Statistics Cards -->
+  <div class="col-12 mb-4">
+    <div class="row" id="stats-cards">
+      <div class="col-md-3 mb-3">
+        <div class="card bg-primary text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between">
+              <div>
+                <h6 class="card-title">Total Saves</h6>
+                <h3 id="total-saves">-</h3>
+              </div>
+              <div class="align-self-center">
+                <i class="fas fa-save fa-2x"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-3 mb-3">
+        <div class="card bg-success text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between">
+              <div>
+                <h6 class="card-title">Countries</h6>
+                <h3 id="total-countries">-</h3>
+              </div>
+              <div class="align-self-center">
+                <i class="fas fa-flag fa-2x"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-3 mb-3">
+        <div class="card bg-info text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between">
+              <div>
+                <h6 class="card-title">Metrics</h6>
+                <h3 id="total-metrics">-</h3>
+              </div>
+              <div class="align-self-center">
+                <i class="fas fa-chart-line fa-2x"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-3 mb-3">
+        <div class="card bg-warning text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between">
+              <div>
+                <h6 class="card-title">Latest Game Date</h6>
+                <h6 id="latest-date">-</h6>
+              </div>
+              <div class="align-self-center">
+                <i class="fas fa-calendar fa-2x"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <!-- Recent Activity -->
+  <div class="col-lg-6 mb-4">
+    <div class="card">
+      <div
+        class="card-header d-flex justify-content-between align-items-center"
+      >
+        <h5 class="mb-0">Recent Saves</h5>
+        <button
+          class="btn btn-sm btn-outline-primary"
+          onclick="refreshRecentSaves()"
+        >
+          <i class="fas fa-refresh"></i> Refresh
+        </button>
+      </div>
+      <div class="card-body">
+        <div id="recent-saves-loading" class="text-center">
+          <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+        <div id="recent-saves-list" style="display: none">
+          <!-- Recent saves will be populated here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Countries -->
+  <div class="col-lg-6 mb-4">
+    <div class="card">
+      <div
+        class="card-header d-flex justify-content-between align-items-center"
+      >
+        <h5 class="mb-0">Top Countries by GDP</h5>
+        <select
+          class="form-select form-select-sm"
+          style="width: auto"
+          id="ranking-metric"
+        >
+          <option value="gdp">GDP</option>
+          <option value="population">Population</option>
+          <option value="prestige">Prestige</option>
+          <option value="military_size">Military Size</option>
+          <option value="weekly_income">Weekly Income</option>
+          <option value="money_holding">Treasury</option>
+          <option value="literacy">Literacy</option>
+          <option value="avgsol">Standard of Living</option>
+          <option value="culture_amount">Cultural Diversity</option>
+          <option value="power_projection">Power Projection</option>
+        </select>
+      </div>
+      <div class="card-body">
+        <div id="top-countries-loading" class="text-center">
+          <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+        <div id="top-countries-list" style="display: none">
+          <!-- Top countries will be populated here -->
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <!-- Metric Trends Chart -->
+  <div class="col-12 mb-4">
+    <div class="card">
+      <div
+        class="card-header d-flex justify-content-between align-items-center"
+      >
+        <h5 class="mb-0">Metric Trends</h5>
+        <div class="d-flex gap-2">
+          <select
+            class="form-select form-select-sm"
+            id="playthrough-selector"
+            style="min-width: 200px"
+          >
+            <option value="">None</option>
+          </select>
+          <select class="form-select form-select-sm" id="trend-metric">
+            <option value="gdp">GDP</option>
+            <option value="population">Population</option>
+            <option value="prestige">Prestige</option>
+            <option value="military_size">Military Size</option>
+            <option value="weekly_income">Weekly Income</option>
+            <option value="money_holding">Treasury</option>
+            <option value="literacy">Literacy</option>
+            <option value="avgsol">Standard of Living</option>
+            <option value="culture_amount">Cultural Diversity</option>
+            <option value="power_projection">Power Projection</option>
+          </select>
+          <div class="input-group input-group-sm" style="width: 120px">
+            <span class="input-group-text">Top</span>
+            <input
+              type="number"
+              class="form-control"
+              id="country-count"
+              value="10"
+              min="1"
+              max="50"
+              title="Number of countries to display"
+            />
+          </div>
+          <div class="btn-group">
+            <button
+              class="btn btn-sm btn-outline-primary"
+              onclick="refreshTrends()"
+            >
+              <i class="fas fa-refresh"></i>
+            </button>
+            <button
+              class="btn btn-sm btn-outline-success"
+              onclick="showExportModal('trends', {showMetricSelector: true})"
+            >
+              <i class="fas fa-download"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div
+          class="chart-container"
+          style="
+            position: relative;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+          "
+        >
+          <canvas id="trends-chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %} {% block extra_scripts %}
+<script>
+  // Dashboard-specific JavaScript
+  document.addEventListener("DOMContentLoaded", function () {
+    // Initialize dashboard
+    initializeDashboard();
+
+    // Setup metric selector change handler
+    document
+      .getElementById("ranking-metric")
+      .addEventListener("change", function () {
+        loadTopCountries(this.value);
+      });
+
+    document
+      .getElementById("trend-metric")
+      .addEventListener("change", function () {
+        loadTrends(this.value);
+      });
+
+    document
+      .getElementById("country-count")
+      .addEventListener("change", function () {
+        const metric = document.getElementById("trend-metric").value;
+        loadTrends(metric);
+      });
+
+    document
+      .getElementById("playthrough-selector")
+      .addEventListener("change", function () {
+        // Reload all data when playthrough changes
+        const metric = document.getElementById("ranking-metric").value;
+        const trendMetric = document.getElementById("trend-metric").value;
+        loadTopCountries(metric);
+        loadTrends(trendMetric);
+      });
+  });
+
+  let trendsChart = null;
+
+  let configCountryCount = 10; // Default value
+
+  function getCountryCount() {
+    return Math.max(1, Math.min(50, configCountryCount)); // Clamp between 1 and 50
+  }
+
+  function getCountryCountFromInput() {
+    const input = document.getElementById("country-count");
+    const value = parseInt(input.value) || 10;
+    return Math.max(1, Math.min(50, value)); // Clamp between 1 and 50
+  }
+
+  function loadConfigSettings() {
+    return apiRequest("/api/config")
+      .then((data) => {
+        console.log("Config API response:", data);
+        if (data.config && data.config.default_country_count) {
+          configCountryCount = data.config.default_country_count;
+          console.log("Loaded country count from config:", configCountryCount);
+        } else {
+          console.log(
+            "Config default_country_count not found, using default 10"
+          );
+        }
+      })
+      .catch((error) => {
+        console.error("Error loading config:", error);
+      });
+  }
+
+  function initializeDashboard() {
+    loadConfigSettings().then(() => {
+      loadPlaythroughs();
+      loadStats();
+      loadRecentSaves();
+      loadTopCountries("gdp");
+      loadTrends("gdp");
+    });
+  }
+
+  function loadStats() {
+    apiRequest("/api/stats")
+      .then((data) => {
+        document.getElementById("total-saves").textContent =
+          data.database.saves_count || 0;
+        document.getElementById("total-countries").textContent =
+          data.database.countries_count || 0;
+        document.getElementById("total-metrics").textContent =
+          data.database.countrymetrics_count || 0;
+
+        if (data.latest_save) {
+          document.getElementById("latest-date").textContent =
+            data.latest_save.in_game_date || "-";
+        }
+      })
+      .catch((error) => {
+        console.error("Error loading stats:", error);
+        showAlert("Error loading statistics", "danger");
+      });
+  }
+
+  function loadRecentSaves() {
+    const loading = document.getElementById("recent-saves-loading");
+    const list = document.getElementById("recent-saves-list");
+
+    loading.style.display = "block";
+    list.style.display = "none";
+
+    apiRequest("/api/saves?limit=5")
+      .then((data) => {
+        let html = "";
+
+        if (data.saves && data.saves.length > 0) {
+          data.saves.forEach((save) => {
+            html += `
+                        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                            <div>
+                                <strong>${save.filename}</strong><br>
+                                <small class="text-muted">${
+                                  save.in_game_date
+                                } | ${save.country_count} countries</small>
+                            </div>
+                            <div class="text-end">
+                                <small class="text-muted">${formatDate(
+                                  save.saved_at
+                                )}</small>
+                            </div>
+                        </div>
+                    `;
+          });
+        } else {
+          html =
+            '<div class="text-muted text-center">No saves processed yet</div>';
+        }
+
+        list.innerHTML = html;
+        loading.style.display = "none";
+        list.style.display = "block";
+      })
+      .catch((error) => {
+        console.error("Error loading recent saves:", error);
+        loading.style.display = "none";
+        list.innerHTML =
+          '<div class="text-danger text-center">Error loading saves</div>';
+        list.style.display = "block";
+      });
+  }
+
+  function loadPlaythroughs() {
+    apiRequest("/api/playthroughs")
+      .then((data) => {
+        const selector = document.getElementById("playthrough-selector");
+        if (!selector) return;
+
+        // Clear existing options except the first one
+        while (selector.children.length > 1) {
+          selector.removeChild(selector.lastChild);
+        }
+
+        // Add playthrough options
+        if (data.playthroughs && data.playthroughs.length > 0) {
+          data.playthroughs.forEach((playthrough) => {
+            const option = document.createElement("option");
+            option.value = playthrough.playthrough_id;
+            option.textContent = `${playthrough.name} (${playthrough.start_date} - ${playthrough.end_date})`;
+            selector.appendChild(option);
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("Error loading playthroughs:", error);
+      });
+  }
+
+  function getSelectedPlaythroughId() {
+    const selector = document.getElementById("playthrough-selector");
+    return selector ? selector.value : "";
+  }
+
+  function loadTopCountries(metric = "gdp") {
+    const loading = document.getElementById("top-countries-loading");
+    const list = document.getElementById("top-countries-list");
+
+    loading.style.display = "block";
+    list.style.display = "none";
+
+    const playthroughId = getSelectedPlaythroughId();
+    const params = new URLSearchParams({ limit: "10" });
+    if (playthroughId) params.append("playthrough_id", playthroughId);
+
+    apiRequest(`/api/rankings/${metric}?${params.toString()}`)
+      .then((data) => {
+        let html = "";
+
+        if (data.rankings && data.rankings.length > 0) {
+          data.rankings.forEach((country, index) => {
+            const badgeClass =
+              index < 3
+                ? ["bg-warning", "bg-secondary", "bg-info"][index]
+                : "bg-light text-dark";
+            html += `
+                        <div class="d-flex justify-content-between align-items-center py-2">
+                            <div class="d-flex align-items-center">
+                                <span class="badge ${badgeClass} me-2">${
+              index + 1
+            }</span>
+                                <div>
+                                    <strong>${
+                                      country.name || country.country_tag
+                                    }</strong><br>
+                                    <small class="text-muted">${
+                                      country.country_tag
+                                    }</small>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <strong>${formatNumber(country.amount)}</strong>
+                            </div>
+                        </div>
+                    `;
+          });
+        } else {
+          html = '<div class="text-muted text-center">No data available</div>';
+        }
+
+        list.innerHTML = html;
+        loading.style.display = "none";
+        list.style.display = "block";
+      })
+      .catch((error) => {
+        console.error("Error loading top countries:", error);
+        loading.style.display = "none";
+        list.innerHTML =
+          '<div class="text-danger text-center">Error loading rankings</div>';
+        list.style.display = "block";
+      });
+  }
+
+  function loadTrends(metric = "gdp") {
+    const playthroughId = getSelectedPlaythroughId();
+
+    console.log(
+      "loadTrends called with metric:",
+      metric,
+      "playthroughId:",
+      playthroughId
+    );
+
+    if (playthroughId) {
+      // Use playthrough-specific endpoint
+      const params = new URLSearchParams({
+        metric: metric,
+        limit: "200",
+        top_countries: getCountryCount().toString(),
+      });
+      const endpoint = `/api/playthroughs/${playthroughId}/metrics`;
+
+      console.log("Making API request to:", `${endpoint}?${params.toString()}`);
+
+      apiRequest(`${endpoint}?${params.toString()}`)
+        .then((data) => {
+          console.log("API response received:", data);
+
+          // Make sure canvas is visible
+          const canvas = document.getElementById("trends-chart");
+          if (canvas) {
+            canvas.style.display = "block";
+          }
+
+          updateTrendsChart(data, metric);
+        })
+        .catch((error) => {
+          console.error("Error loading trends:", error);
+          showAlert("Error loading trend data: " + error.message, "danger");
+        });
+    } else {
+      // No playthrough selected, show message
+      if (trendsChart) {
+        trendsChart.destroy();
+        trendsChart = null;
+      }
+
+      // Show placeholder message
+      const canvas = document.getElementById("trends-chart");
+      const container = canvas.parentElement;
+      container.innerHTML =
+        '<div class="text-center text-muted p-4"><i class="fas fa-chart-line fa-3x mb-3"></i><br>Select a campaign to view trends</div>' +
+        '<div class="chart-container" style="position: relative; height: 400px; width: 100%; overflow: hidden;"><canvas id="trends-chart" style="display: none;"></canvas></div>';
+    }
+  }
+
+  function updateTrendsChart(data, metric) {
+    console.log("updateTrendsChart called with:", data, "metric:", metric);
+    console.log("Current configCountryCount:", configCountryCount);
+    console.log("getCountryCount() returns:", getCountryCount());
+
+    const canvas = document.getElementById("trends-chart");
+    if (!canvas) {
+      console.error("Canvas element not found!");
+      return;
+    }
+
+    if (trendsChart) {
+      trendsChart.destroy();
+      trendsChart = null;
+    }
+
+    // Completely recreate the canvas to prevent size accumulation
+    const oldChartContainer = canvas.parentElement;
+    const cardBody = oldChartContainer.parentElement;
+
+    // Clear the entire card body to remove any placeholder text
+    cardBody.innerHTML = "";
+
+    // Create new chart container and canvas
+    const newChartContainer = document.createElement("div");
+    newChartContainer.className = "chart-container";
+    newChartContainer.style.cssText =
+      "position: relative; height: 400px; width: 100%; overflow: hidden; min-height: 400px;";
+
+    const newCanvas = document.createElement("canvas");
+    newCanvas.id = "trends-chart";
+    newCanvas.style.maxWidth = "100%";
+    newCanvas.style.maxHeight = "100%";
+
+    newChartContainer.appendChild(newCanvas);
+    cardBody.appendChild(newChartContainer);
+
+    // Update references
+    const ctx = newCanvas.getContext("2d");
+
+    const datasets = [];
+    const colors = [
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#4BC0C0",
+      "#9966FF",
+      "#FF9F40",
+      "#FF6384",
+      "#C9CBCF",
+      "#4BC0C0",
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#FF9F40",
+      "#9966FF",
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#4BC0C0",
+      "#9966FF",
+      "#FF9F40",
+      "#C9CBCF",
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#4BC0C0",
+      "#9966FF",
+      "#FF9F40",
+      "#C9CBCF",
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#4BC0C0",
+      "#9966FF",
+      "#FF9F40",
+      "#C9CBCF",
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#4BC0C0",
+      "#9966FF",
+      "#FF9F40",
+      "#C9CBCF",
+      "#FF6384",
+      "#36A2EB",
+      "#FFCE56",
+      "#4BC0C0",
+      "#9966FF",
+      "#FF9F40",
+      "#C9CBCF",
+      "#FF6384",
+    ];
+
+    // Handle different data formats
+    if (data.trends) {
+      // Old format from /api/trends endpoint - limit to top N
+      console.log("Using OLD format (data.trends)");
+      console.log(
+        "Total countries in trends:",
+        Object.keys(data.trends).length
+      );
+      const trendEntries = Object.entries(data.trends)
+        .filter(
+          ([countryTag, countryData]) =>
+            countryData.data && countryData.data.length > 0
+        )
+        .map(([countryTag, countryData]) => {
+          // Get latest value for ranking
+          const latestValue =
+            countryData.data[countryData.data.length - 1].value;
+          return [countryTag, countryData, latestValue];
+        })
+        .sort((a, b) => b[2] - a[2]) // Sort by latest value descending
+        .slice(0, getCountryCountFromInput()); // Take top N countries
+
+      console.log(
+        "OLD format showing",
+        trendEntries.length,
+        "countries:",
+        trendEntries.map((e) => e[0])
+      );
+
+      let colorIndex = 0;
+      for (const [countryTag, countryData, latestValue] of trendEntries) {
+        datasets.push({
+          label: countryData.name || countryTag,
+          data: countryData.data.map((point) => ({
+            x: point.date,
+            y: point.value,
+          })),
+          borderColor: colors[colorIndex % colors.length],
+          backgroundColor: colors[colorIndex % colors.length] + "20",
+          fill: false,
+          tension: 0.1,
+        });
+        colorIndex++;
+      }
+    } else if (data.metrics) {
+      // New format from /api/playthroughs/{id}/metrics endpoint
+      console.log("Using NEW format (data.metrics)");
+      console.log("Raw metrics received:", data.metrics.length);
+
+      const countryData = {};
+
+      // Group metrics by country
+      data.metrics.forEach((metric, index) => {
+        if (index < 10) {
+          console.log(
+            `Metric ${index}: ${metric.country_tag} (${metric.country_name}) - ${metric.amount} on ${metric.in_game_date}`
+          );
+        }
+
+        if (!countryData[metric.country_tag]) {
+          countryData[metric.country_tag] = {
+            name: metric.country_name,
+            data: [],
+          };
+          if (Object.keys(countryData).length <= 10) {
+            console.log(
+              `New country added: ${metric.country_tag} (total: ${
+                Object.keys(countryData).length
+              })`
+            );
+          }
+        }
+        countryData[metric.country_tag].data.push({
+          x: metric.in_game_date,
+          y: metric.amount,
+        });
+      });
+
+      console.log(
+        "After grouping - countries:",
+        Object.keys(countryData).length
+      );
+
+      // Create datasets - limit to top N countries by latest value
+      console.log("Total countries in data:", Object.keys(countryData).length);
+      console.log("Requesting top", getCountryCount(), "countries");
+
+      const countryEntries = Object.entries(countryData)
+        .filter(([countryTag, countryInfo]) => countryInfo.data.length > 0)
+        .map(([countryTag, countryInfo]) => {
+          // Sort data by date
+          countryInfo.data.sort((a, b) => new Date(a.x) - new Date(b.x));
+          // Get latest value for ranking
+          const latestValue = countryInfo.data[countryInfo.data.length - 1].y;
+          return [countryTag, countryInfo, latestValue];
+        })
+        .sort((a, b) => b[2] - a[2]) // Sort by latest value descending
+        .slice(0, getCountryCountFromInput()); // Take top N countries
+
+      console.log(
+        "Showing",
+        countryEntries.length,
+        "countries:",
+        countryEntries.map((e) => e[0])
+      );
+
+      let colorIndex = 0;
+      for (const [countryTag, countryInfo, latestValue] of countryEntries) {
+        datasets.push({
+          label: countryInfo.name || countryTag,
+          data: countryInfo.data,
+          borderColor: colors[colorIndex % colors.length],
+          backgroundColor: colors[colorIndex % colors.length] + "20",
+          fill: false,
+          tension: 0.1,
+        });
+        colorIndex++;
+      }
+    }
+
+    // Calculate maximum value across all datasets
+    let maxValue = 0;
+    datasets.forEach((dataset) => {
+      dataset.data.forEach((point) => {
+        if (point.y > maxValue) {
+          maxValue = point.y;
+        }
+      });
+    });
+
+    // Round up based on metric type
+    let roundedMax;
+    const metricName = (data.metric_name || metric || "").toLowerCase();
+
+    if (
+      metricName.includes("military") ||
+      metricName.includes("army") ||
+      metricName.includes("navy")
+    ) {
+      // Military size: round up to nearest 10,000 (tens of thousands)
+      roundedMax = Math.ceil(maxValue / 10000) * 10000;
+    } else if (
+      metricName.includes("prestige") ||
+      metricName.includes("power_projection")
+    ) {
+      // Prestige & Power Projection: round up to nearest 1000
+      roundedMax = Math.ceil(maxValue / 1000) * 1000;
+    } else if (
+      metricName.includes("literacy") ||
+      metricName.includes("avgsol")
+    ) {
+      // Percentage values: round up to nearest 10
+      roundedMax = Math.ceil(maxValue / 10) * 10;
+    } else if (metricName.includes("culture_amount")) {
+      // Culture count: round up to nearest 10
+      roundedMax = Math.ceil(maxValue / 10) * 10;
+    } else if (
+      metricName.includes("gdp") ||
+      metricName.includes("money_holding") ||
+      metricName.includes("weekly_income")
+    ) {
+      // Economic values: round up to nearest million for large values
+      if (maxValue > 10000000) {
+        roundedMax = Math.ceil(maxValue / 10000000) * 10000000;
+      } else if (maxValue > 1000000) {
+        roundedMax = Math.ceil(maxValue / 1000000) * 1000000;
+      } else if (maxValue > 100000) {
+        roundedMax = Math.ceil(maxValue / 100000) * 100000;
+      } else {
+        roundedMax = Math.ceil(maxValue / 10000) * 10000;
+      }
+    } else if (maxValue > 1000000) {
+      // Large values (> 1M): round up to nearest million
+      roundedMax = Math.ceil(maxValue / 1000000) * 1000000;
+    } else if (maxValue > 10000) {
+      // Medium values (> 10K): round up to nearest 10,000
+      roundedMax = Math.ceil(maxValue / 10000) * 10000;
+    } else if (maxValue > 1000) {
+      // Small values (> 1K): round up to nearest 1,000
+      roundedMax = Math.ceil(maxValue / 1000) * 1000;
+    } else {
+      // Very small values: round up to nearest 100
+      roundedMax = Math.ceil(maxValue / 100) * 100;
+    }
+
+    console.log("Creating chart with datasets:", datasets);
+    console.log("Max value:", maxValue, "Rounded max:", roundedMax);
+
+    if (datasets.length === 0) {
+      console.warn("No datasets to display");
+      const container = canvas.parentElement;
+      container.innerHTML =
+        '<div class="text-center text-muted p-4">No trend data available for selected campaign</div>' +
+        '<div class="chart-container" style="position: relative; height: 400px; width: 100%; overflow: hidden;"><canvas id="trends-chart" style="display: none;"></canvas></div>';
+      return;
+    }
+
+    try {
+      trendsChart = new Chart(ctx, {
+        type: "line",
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          resizeDelay: 100,
+          interaction: {
+            intersect: false,
+            mode: "index",
+          },
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                parser: "yyyy-MM-dd",
+                displayFormats: {
+                  day: "MMM dd",
+                  month: "MMM yyyy",
+                },
+              },
+              title: {
+                display: true,
+                text: "Date",
+              },
+            },
+            y: {
+              beginAtZero: true,
+              min: 0,
+              max: metricName.includes("literacy") ? 1 : roundedMax,
+              title: {
+                display: true,
+                text: (data.metric_name || metric || "Value").toUpperCase(),
+              },
+              ticks: {
+                callback: function (value) {
+                  // For literacy (percentage), show as percentage
+                  if (metricName.includes("literacy")) {
+                    return (value * 100).toFixed(1) + "%";
+                  }
+                  return formatNumber(value);
+                },
+              },
+            },
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: "top",
+            },
+            tooltip: {
+              mode: "index",
+              intersect: false,
+              callbacks: {
+                label: function (context) {
+                  return `${context.dataset.label}: ${formatNumber(
+                    context.parsed.y
+                  )}`;
+                },
+              },
+            },
+          },
+        },
+      });
+
+      console.log("Chart created successfully:", trendsChart);
+    } catch (error) {
+      console.error("Error creating chart:", error);
+      showAlert("Error creating trend chart: " + error.message, "danger");
+    }
+  }
+
+  function refreshRecentSaves() {
+    loadRecentSaves();
+  }
+
+  function refreshTrends() {
+    const metric = document.getElementById("trend-metric").value;
+    // Reload config settings to get latest country count
+    loadConfigSettings().then(() => {
+      loadTrends(metric);
+    });
+  }
+</script>
+{% endblock %}
