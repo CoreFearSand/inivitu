@@ -16,7 +16,7 @@ class ConfigManager:
     """Manages application configuration with validation and defaults."""
     
     DEFAULT_CONFIG = {
-        "save_directory": r"C:\Users\kaare\OneDrive\Dokumenter\Paradox Interactive\Victoria 3\save games",
+        "save_directory": r"C:\Users\[User]\Dokumenter\Paradox Interactive\Victoria 3\save games",
         "database_path": "./victoria3_data.db",
         "web_port": 8080,
         "polling_interval": 5,
