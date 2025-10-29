@@ -76,10 +76,10 @@ The `config.json` file contains all application settings:
 
 ## Tracked Metrics
 
-- **Economic**: GDP, weekly income, money reserves
+- **Economic**: GDP, weekly income, money reserves (weekly income does not work currently)
 - **Social**: Population, literacy, average standard of living
 - **Political**: Prestige, culture diversity
-- **Military**: Military workforce size
+- **Military**: Military workforce size 
 
 ## Project Structure
 
@@ -106,11 +106,3 @@ This project follows a modular architecture with clear separation of concerns:
 4. **Database Layer**: Stores and queries game metrics
 5. **API Layer**: Provides REST endpoints
 6. **Web Interface**: Interactive dashboard
-
-## License
-
-This project is open source. See LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome! Please see CONTRIBUTING.md for guidelines.
