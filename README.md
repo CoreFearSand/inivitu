@@ -1,4 +1,4 @@
-# Victoria 3 Game Tracker
+# inivitu
 
 A system for automatically monitoring Victoria 3 autosave files, parsing game data, and providing web-based visualization of game metrics over time.
 
@@ -21,7 +21,7 @@ python victoria3_tracker.py --install
 ### Manual Installation
 1. **Prerequisites**:
    - Python 3.8 or higher
-   - rakaly.exe ([download here](https://github.com/rakaly/rakaly/releases))
+   - rakaly.exe ([download here](https://github.com/rakaly/cli/releases/))
 
 2. **Install Dependencies**:
    ```bash
