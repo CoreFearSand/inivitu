@@ -73,7 +73,7 @@ def check_rakaly():
     
     print("✗ rakaly.exe not found")
     print("  Please download rakaly.exe and place it in the project directory")
-    print("  Download from: https://github.com/rakaly/rakaly/releases")
+    print("  Download from: https://github.com/rakaly/cli/releases/")
     return False
 
 def check_save_directory():
@@ -86,7 +86,6 @@ def check_save_directory():
         Path.home() / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games",
         Path(r"C:\Users") / username / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games",
         Path(r"C:\Users") / username / "OneDrive" / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games",
-        # Localised OneDrive folder names (e.g. Norwegian "Dokumenter")
         Path(r"C:\Users") / username / "OneDrive" / "Dokumenter" / "Paradox Interactive" / "Victoria 3" / "save games",
     ]
 

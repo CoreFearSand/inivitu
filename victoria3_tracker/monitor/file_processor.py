@@ -117,31 +117,31 @@ class FileValidator:
         return result
     
     def _is_file_stable(self, file_path: Path, stability_time: float = 1.0) -> bool:
-        """Check if file size is stable (not being written to).
-        
+        """Check if file size and mtime are stable (not being written to).
+
         Args:
             file_path: Path to the file
             stability_time: Time to wait for stability check
-            
+
         Returns:
             True if file appears stable
         """
         try:
-            initial_size = file_path.stat().st_size
-            initial_mtime = file_path.stat().st_mtime
-            
-            time.sleep(stability_time)
-            
-            if not file_path.exists():
-                return False
-            
-            final_size = file_path.stat().st_size
-            final_mtime = file_path.stat().st_mtime
-            
-            return initial_size == final_size and initial_mtime == final_mtime
-            
+            initial_stat = file_path.stat()
         except (OSError, IOError):
             return False
+
+        time.sleep(stability_time)
+
+        try:
+            # Re-stat inside its own try block: file may have been renamed or
+            # deleted by the game between the sleep and this call.
+            final_stat = file_path.stat()
+        except (OSError, IOError):
+            return False
+
+        return (initial_stat.st_size == final_stat.st_size and
+                initial_stat.st_mtime == final_stat.st_mtime)
 
 class FileProcessingQueue:
     """Asynchronous file processing queue with validation and error handling."""
@@ -174,8 +174,9 @@ class FileProcessingQueue:
             'average_processing_time': 0.0
         }
         
-        # Processing timeout
-        self.processing_timeout = config.get("processing_timeout_seconds", 30)
+        # Processing timeout — clamp to a sane range (5 s … 1 hour)
+        raw_timeout = config.get("processing_timeout_seconds", 30)
+        self.processing_timeout = max(5, min(int(raw_timeout), 3600))
         
         # Number of worker threads
         self.num_workers = config.get("processing_workers", 2)
@@ -346,8 +347,31 @@ class FileProcessingQueue:
                         )
                     logger.info(f"[{worker_name}] Successfully processed {task.file_path.name} in {processing_time:.2f}s")
                 else:
-                    self.stats['files_failed'] += 1
-                    logger.error(f"[{worker_name}] Failed to process {task.file_path.name} after {processing_time:.2f}s")
+                    # Retry if we haven't hit the attempt limit yet.
+                    # Exponential backoff: 0.5 s → 1 s → 2 s …
+                    # Victoria 3 sometimes keeps the file handle open briefly
+                    # after writing, so a short pause usually resolves it.
+                    if task.attempts < task.max_attempts:
+                        backoff = 0.5 * (2 ** (task.attempts - 1))
+                        logger.warning(
+                            f"[{worker_name}] Processing failed for {task.file_path.name} "
+                            f"(attempt {task.attempts}/{task.max_attempts}), "
+                            f"retrying in {backoff:.1f}s"
+                        )
+                        time.sleep(backoff)
+                        try:
+                            self.task_queue.put_nowait(task)
+                        except queue.Full:
+                            logger.error(
+                                f"[{worker_name}] Queue full, cannot retry {task.file_path.name}"
+                            )
+                            self.stats['files_failed'] += 1
+                    else:
+                        self.stats['files_failed'] += 1
+                        logger.error(
+                            f"[{worker_name}] Failed to process {task.file_path.name} "
+                            f"after {task.max_attempts} attempts ({processing_time:.2f}s)"
+                        )
             
         except Exception as e:
             logger.error(f"[{worker_name}] Error processing task {task.file_path}: {e}")

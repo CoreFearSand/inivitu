@@ -53,21 +53,21 @@ class ConfigManager {
         }
         
         // Reset button
-        const resetBtn = document.querySelector('[onclick="resetForm()"]');
+        const resetBtn = document.getElementById('reset-btn');
         if (resetBtn) {
-            resetBtn.onclick = () => this.resetForm();
+            resetBtn.addEventListener('click', () => this.resetForm());
         }
-        
+
         // Validate button
-        const validateBtn = document.querySelector('[onclick="validateConfiguration()"]');
+        const validateBtn = document.getElementById('validate-btn');
         if (validateBtn) {
-            validateBtn.onclick = () => this.validateConfiguration();
+            validateBtn.addEventListener('click', () => this.validateConfiguration());
         }
-        
+
         // Directory validation button
-        const dirValidateBtn = document.querySelector('[onclick="validateDirectory()"]');
+        const dirValidateBtn = document.getElementById('validate-dir-btn');
         if (dirValidateBtn) {
-            dirValidateBtn.onclick = () => this.validateDirectory();
+            dirValidateBtn.addEventListener('click', () => this.validateDirectory());
         }
         
         // Warn about unsaved changes

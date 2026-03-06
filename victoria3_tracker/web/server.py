@@ -147,13 +147,13 @@ class WebServer:
             try:
                 # Get basic stats for initial page load
                 stats = self.db_manager.get_database_stats()
-                
-                return render_template('dashboard.html', 
+
+                return render_template('dashboard.html',
                                      stats=stats,
                                      page_title='Dashboard')
-            except Exception as e:
-                logger.error(f"Error loading dashboard: {e}")
-                return render_template('dashboard.html', 
+            except Exception:
+                logger.exception("Error loading dashboard")
+                return render_template('dashboard.html',
                                      stats={},
                                      error="Failed to load dashboard data")
         
@@ -163,12 +163,12 @@ class WebServer:
             try:
                 # Get countries for initial page load
                 countries_data = self._get_countries_data()
-                
+
                 return render_template('countries.html',
                                      countries=countries_data.get('countries', []),
                                      page_title='Countries')
-            except Exception as e:
-                logger.error(f"Error loading countries page: {e}")
+            except Exception:
+                logger.exception("Error loading countries page")
                 return render_template('countries.html',
                                      countries=[],
                                      error="Failed to load countries data")
@@ -189,8 +189,8 @@ class WebServer:
                                      country=summary,
                                      country_tag=country_tag,
                                      page_title=f"{summary.get('country_info', {}).get('name', country_tag)}")
-            except Exception as e:
-                logger.error(f"Error loading country detail: {e}")
+            except Exception:
+                logger.exception("Error loading country detail")
                 return render_template('error.html',
                                      error="Failed to load country data",
                                      page_title='Error')
@@ -210,8 +210,8 @@ class WebServer:
                                      rankings=rankings_data.get('rankings', []),
                                      current_metric='gdp',
                                      page_title='Rankings')
-            except Exception as e:
-                logger.error(f"Error loading rankings page: {e}")
+            except Exception:
+                logger.exception("Error loading rankings page")
                 return render_template('rankings.html',
                                      metrics=[],
                                      rankings=[],
@@ -227,8 +227,8 @@ class WebServer:
                 return render_template('saves.html',
                                      saves=saves_data.get('saves', []),
                                      page_title='Processed Saves')
-            except Exception as e:
-                logger.error(f"Error loading saves page: {e}")
+            except Exception:
+                logger.exception("Error loading saves page")
                 return render_template('saves.html',
                                      saves=[],
                                      error="Failed to load saves data")
@@ -251,8 +251,8 @@ class WebServer:
                                      countries=countries_data.get('countries', []),
                                      playthroughs=playthroughs,
                                      page_title='War Statistics')
-            except Exception as e:
-                logger.error(f"Error loading wars page: {e}")
+            except Exception:
+                logger.exception("Error loading wars page")
                 return render_template('wars.html',
                                      war_stats={},
                                      countries=[],
@@ -329,42 +329,36 @@ class WebServer:
     
     def _get_countries_data(self):
         """Get countries data for web pages."""
-        try:
-            from ..database import DataAccessLayer
-            data_access = DataAccessLayer(self.db_manager)
-            
-            # Get countries with latest data
-            results = self.db_manager.execute_query("""
-                SELECT DISTINCT c.country_tag, c.name, c.is_player_country,
-                       MAX(s.in_game_date) as latest_date,
-                       COUNT(DISTINCT s.save_id) as save_count
-                FROM Countries c
-                JOIN Saves s ON c.save_id = s.save_id
-                GROUP BY c.country_tag, c.name, c.is_player_country
-                ORDER BY c.name
-            """)
-            
-            countries = []
-            for row in results:
-                # Use CSV mapping for display name, fallback to database name or tag
-                display_name = self.get_country_display_name(row['country_tag'])
-                if not display_name or display_name == row['country_tag'].upper():
-                    display_name = row['name'] or row['country_tag']
-                
-                countries.append({
-                    'country_tag': row['country_tag'],
-                    'name': display_name,  # This is now the readable display name
-                    'database_name': row['name'],  # Keep original database name for reference
-                    'is_player_country': bool(row['is_player_country']),
-                    'latest_date': row['latest_date'],
-                    'save_count': row['save_count']
-                })
-            
-            return {'countries': countries}
-            
-        except Exception as e:
-            logger.error(f"Error getting countries data: {e}")
-            return {'countries': []}
+        # No try/except here — callers own the error boundary so failures are
+        # visible in the page (via the route-level handler) rather than silently
+        # returning empty data.
+        results = self.db_manager.execute_query("""
+            SELECT DISTINCT c.country_tag, c.name, c.is_player_country,
+                   MAX(s.in_game_date) as latest_date,
+                   COUNT(DISTINCT s.save_id) as save_count
+            FROM Countries c
+            JOIN Saves s ON c.save_id = s.save_id
+            GROUP BY c.country_tag, c.name, c.is_player_country
+            ORDER BY c.name
+        """)
+
+        countries = []
+        for row in results:
+            # Use CSV mapping for display name, fallback to database name or tag
+            display_name = self.get_country_display_name(row['country_tag'])
+            if not display_name or display_name == row['country_tag'].upper():
+                display_name = row['name'] or row['country_tag']
+
+            countries.append({
+                'country_tag': row['country_tag'],
+                'name': display_name,
+                'database_name': row['name'],
+                'is_player_country': bool(row['is_player_country']),
+                'latest_date': row['latest_date'],
+                'save_count': row['save_count']
+            })
+
+        return {'countries': countries}
     
     def _get_country_summary(self, country_tag):
         """Get country summary data."""
@@ -408,121 +402,79 @@ class WebServer:
     
     def _get_rankings_data(self, metric_name):
         """Get rankings data for web pages."""
-        try:
-            from ..database import DataAccessLayer
-            data_access = DataAccessLayer(self.db_manager)
-            
-            rankings = data_access.get_country_rankings(metric_name, None, 50)
-            
-            return {'rankings': rankings}
-            
-        except Exception as e:
-            logger.error(f"Error getting rankings data: {e}")
-            return {'rankings': []}
+        from ..database import DataAccessLayer
+        data_access = DataAccessLayer(self.db_manager)
+        rankings = data_access.get_country_rankings(metric_name, None, 50)
+        return {'rankings': rankings}
     
     def _get_saves_data(self):
         """Get saves data for web pages."""
-        try:
-            from ..database import DataAccessLayer
-            data_access = DataAccessLayer(self.db_manager)
-            
-            saves = data_access.get_processed_saves(100)
-            
-            return {'saves': saves}
-            
-        except Exception as e:
-            logger.error(f"Error getting saves data: {e}")
-            return {'saves': []}
+        from ..database import DataAccessLayer
+        data_access = DataAccessLayer(self.db_manager)
+        saves = data_access.get_processed_saves(100)
+        return {'saves': saves}
     
     def _get_available_metrics(self):
         """Get available metrics."""
-        try:
-            results = self.db_manager.execute_query("""
-                SELECT name, display_name, unit, description
-                FROM MetricTypes
-                WHERE is_active = TRUE
-                ORDER BY display_name
-            """)
-            
-            return [dict(row) for row in results]
-            
-        except Exception as e:
-            logger.error(f"Error getting metrics: {e}")
-            return []
+        results = self.db_manager.execute_query("""
+            SELECT name, display_name, unit, description
+            FROM MetricTypes
+            WHERE is_active = TRUE
+            ORDER BY display_name
+        """)
+        return [dict(row) for row in results]
     
     def _get_war_statistics_summary(self):
         """Get war statistics summary for initial page load."""
-        try:
-            from ..database import DataAccessLayer
-            data_access = DataAccessLayer(self.db_manager)
-            
-            # Get overall war statistics
-            war_stats_query = """
-                SELECT
-                    COUNT(DISTINCT w.id) as total_wars,
-                    COUNT(DISTINCT CASE WHEN w.status = 'ongoing' THEN w.id END) as ongoing_wars,
-                    COUNT(DISTINCT CASE WHEN w.status = 'ended' THEN w.id END) as ended_wars,
-                    COUNT(DISTINCT CASE WHEN w.status = 'white_peace' THEN w.id END) as white_peace_wars,
-                    COALESCE(SUM(wp.casualties), 0) as total_casualties,
-                    COALESCE(SUM(wp.materiel_cost + wp.wage_cost), 0) as total_war_cost,
-                    COUNT(DISTINCT wp.country_tag) as countries_involved
-                FROM Wars w
-                LEFT JOIN WarParticipants wp ON w.id = wp.war_id
-            """
-            
-            war_stats = self.db_manager.execute_query(war_stats_query)
-            
-            # Get battle statistics
-            battle_stats_query = """
-                SELECT 
-                    COUNT(*) as total_battles,
-                    COALESCE(SUM(b.attacker_casualties + b.defender_casualties), 0) as total_battle_casualties
-                FROM Battles b
-            """
-            
-            battle_stats = self.db_manager.execute_query(battle_stats_query)
-            
-            # Combine results
-            result = {}
-            if war_stats:
-                result.update(dict(war_stats[0]))
-            if battle_stats:
-                result.update(dict(battle_stats[0]))
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error getting war statistics summary: {e}")
-            return {}
+        war_stats = self.db_manager.execute_query("""
+            SELECT
+                COUNT(DISTINCT w.id) as total_wars,
+                COUNT(DISTINCT CASE WHEN w.status = 'ongoing' THEN w.id END) as ongoing_wars,
+                COUNT(DISTINCT CASE WHEN w.status = 'ended' THEN w.id END) as ended_wars,
+                COUNT(DISTINCT CASE WHEN w.status = 'white_peace' THEN w.id END) as white_peace_wars,
+                COALESCE(SUM(wp.casualties), 0) as total_casualties,
+                COALESCE(SUM(wp.materiel_cost + wp.wage_cost), 0) as total_war_cost,
+                COUNT(DISTINCT wp.country_tag) as countries_involved
+            FROM Wars w
+            LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+        """)
+
+        battle_stats = self.db_manager.execute_query("""
+            SELECT
+                COUNT(*) as total_battles,
+                COALESCE(SUM(b.attacker_casualties + b.defender_casualties), 0) as total_battle_casualties
+            FROM Battles b
+        """)
+
+        result = {}
+        if war_stats:
+            result.update(dict(war_stats[0]))
+        if battle_stats:
+            result.update(dict(battle_stats[0]))
+        return result
     
     def _get_available_playthroughs(self):
         """Get available playthroughs for filtering."""
-        try:
-            results = self.db_manager.execute_query("""
-                SELECT DISTINCT s.playthrough_id, 
-                       MIN(s.saved_at) as first_save,
-                       MAX(s.saved_at) as last_save,
-                       COUNT(*) as save_count
-                FROM Saves s
-                WHERE s.playthrough_id IS NOT NULL
-                GROUP BY s.playthrough_id
-                ORDER BY first_save DESC
-            """)
-            
-            playthroughs = []
-            for row in results:
-                playthroughs.append({
-                    'playthrough_id': row['playthrough_id'],
-                    'first_save': row['first_save'],
-                    'last_save': row['last_save'],
-                    'save_count': row['save_count']
-                })
-            
-            return playthroughs
-            
-        except Exception as e:
-            logger.error(f"Error getting playthroughs: {e}")
-            return []
+        results = self.db_manager.execute_query("""
+            SELECT DISTINCT s.playthrough_id,
+                   MIN(s.saved_at) as first_save,
+                   MAX(s.saved_at) as last_save,
+                   COUNT(*) as save_count
+            FROM Saves s
+            WHERE s.playthrough_id IS NOT NULL
+            GROUP BY s.playthrough_id
+            ORDER BY first_save DESC
+        """)
+
+        return [
+            {
+                'playthrough_id': row['playthrough_id'],
+                'first_save': row['first_save'],
+                'last_save': row['last_save'],
+                'save_count': row['save_count']
+            }
+            for row in results
+        ]
     
     def run(self, host: str = '127.0.0.1', port: int = None, debug: bool = False):
         """Run the web server.

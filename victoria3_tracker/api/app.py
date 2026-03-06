@@ -23,6 +23,11 @@ from .country_endpoints import CountryEndpoints
 
 logger = logging.getLogger(__name__)
 
+# Maximum rows the /api/countries endpoint will return in one request.
+# High enough for all realistic save files; raise in config if needed.
+MAX_COUNTRIES_PER_REQUEST = 1000
+
+
 class Victoria3API:
     """Flask REST API for Victoria 3 Game Tracker."""
     
@@ -111,8 +116,20 @@ class Victoria3API:
                 f"[{request_id}] ← {request.method} {request.path} "
                 f"{response.status_code} ({duration_ms:.0f}ms)"
             )
-            # Expose the request ID in the response header so clients can correlate logs
+            # Expose the request ID so clients can correlate logs
             response.headers['X-Request-ID'] = request_id
+
+            # Cache-Control: read-only GET endpoints get a short cache window
+            # so the browser doesn't hammer the API on every re-render.
+            # Mutations (POST/PUT/DELETE), exports, config, and health checks
+            # are never cached.
+            if request.method == 'GET' and response.status_code == 200:
+                no_cache_paths = ('/api/health', '/api/config', '/api/export/')
+                if not any(request.path.startswith(p) for p in no_cache_paths):
+                    response.headers.setdefault('Cache-Control', 'public, max-age=5')
+            else:
+                response.headers['Cache-Control'] = 'no-store'
+
             return response
 
     def _setup_error_handlers(self):
@@ -179,9 +196,8 @@ class Victoria3API:
                 # Get query parameters
                 limit = request.args.get('limit', 100, type=int)
                 save_id = request.args.get('save_id')
-                
-                if limit > 1000:
-                    limit = 1000  # Cap at 1000
+
+                limit = max(1, min(limit, MAX_COUNTRIES_PER_REQUEST))
                 
                 # Build query
                 if save_id:
@@ -502,6 +518,56 @@ class Victoria3API:
                 logger.error(f"Error getting playthroughs: {e}")
                 return jsonify({'error': str(e)}), 500
         
+        # Delete a playthrough and all associated data
+        @self.app.route('/api/playthroughs/<playthrough_id>', methods=['DELETE'])
+        def delete_playthrough(playthrough_id: str):
+            """Delete a playthrough and all associated data.
+
+            Removes all Saves (which cascade-deletes Countries, CountryMetrics,
+            and ProcessingLog rows linked to those saves) and all Wars (which
+            cascade-deletes WarParticipants and WarBattles).
+            """
+            try:
+                if not playthrough_id:
+                    return jsonify({'error': 'playthrough_id is required'}), 400
+
+                # Verify the playthrough exists
+                existing = self.db_manager.execute_query(
+                    "SELECT COUNT(*) AS cnt FROM Saves WHERE playthrough_id = ?",
+                    (playthrough_id,)
+                )
+                if not existing or existing[0]['cnt'] == 0:
+                    return jsonify({'error': 'Playthrough not found'}), 404
+
+                save_count = existing[0]['cnt']
+
+                with self.db_manager.transaction() as conn:
+                    # Delete saves — cascades to Countries, CountryMetrics, ProcessingLog
+                    conn.execute(
+                        "DELETE FROM Saves WHERE playthrough_id = ?",
+                        (playthrough_id,)
+                    )
+                    # Wars store their own playthrough_id (not a FK to Saves),
+                    # so we delete them explicitly; CASCADE handles participants/battles.
+                    conn.execute(
+                        "DELETE FROM Wars WHERE playthrough_id = ?",
+                        (playthrough_id,)
+                    )
+
+                logger.info(
+                    f"Deleted playthrough {playthrough_id!r} "
+                    f"({save_count} saves removed)"
+                )
+                return jsonify({
+                    'success': True,
+                    'message': f'Playthrough deleted ({save_count} saves removed)',
+                    'playthrough_id': playthrough_id
+                })
+
+            except Exception as e:
+                logger.error(f"Error deleting playthrough {playthrough_id!r}: {e}")
+                return jsonify({'error': str(e)}), 500
+
         # Get processed saves
         @self.app.route('/api/saves', methods=['GET'])
         def get_saves():

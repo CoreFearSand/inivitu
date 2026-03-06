@@ -44,7 +44,7 @@ class AdvancedEndpoints:
                 
                 countries = data['countries']
                 metric_name = data.get('metric', 'gdp')
-                limit = data.get('limit', 50)
+                limit = max(1, min(int(data.get('limit', 50)), 200))
                 
                 if not countries or len(countries) > 10:  # Limit to 10 countries
                     abort(400)
@@ -84,10 +84,8 @@ class AdvancedEndpoints:
                 save_id = request.args.get('save_id')
                 playthrough_id = request.args.get('playthrough_id')
                 
-                if limit_countries > 20:
-                    limit_countries = 20
-                if limit_points > 100:
-                    limit_points = 100
+                limit_countries = max(1, min(limit_countries, 20))
+                limit_points = max(1, min(limit_points, 100))
                 
                 # If no playthrough specified, get the most recent one
                 if not playthrough_id and not save_id:
@@ -275,8 +273,7 @@ class AdvancedEndpoints:
                 if not query or len(query) < 2:
                     abort(400)
                 
-                if limit > 100:
-                    limit = 100
+                limit = max(1, min(limit, 100))
                 
                 # Search by name or tag
                 search_query = """

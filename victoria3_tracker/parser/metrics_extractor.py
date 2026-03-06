@@ -100,9 +100,11 @@ class MetricsExtractor:
                         logger.warning(f"No definition field found for country ID {country_id}")
                         continue
                     
-                    # Validate country tag (should be 3 characters)
-                    if not isinstance(country_tag, str) or len(country_tag) != 3:
-                        logger.warning(f"Invalid country tag: {country_tag}")
+                    # Validate country tag: must be exactly 3 alphanumeric characters
+                    # (regular countries are 3 letters e.g. "ENG"; dynamic/rebel
+                    # countries use tags like "D01", so digits are valid too)
+                    if not isinstance(country_tag, str) or len(country_tag) != 3 or not country_tag.isalnum():
+                        logger.warning(f"Invalid country tag: {country_tag!r}")
                         continue
                     
                     # Extract metrics for this country
@@ -325,9 +327,11 @@ class MetricsExtractor:
         }
         
         try:
-            # Validate country tag
-            if not country_metrics.country_tag or len(country_metrics.country_tag) != 3:
-                validation_result['errors'].append(f"Invalid country tag: {country_metrics.country_tag}")
+            # Validate country tag: must be exactly 3 alphanumeric characters
+            # (includes dynamic/rebel tags like "D01")
+            tag = country_metrics.country_tag
+            if not tag or len(tag) != 3 or not tag.isalnum():
+                validation_result['errors'].append(f"Invalid country tag: {tag!r}")
                 validation_result['valid'] = False
             
             # Check each metric

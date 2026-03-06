@@ -601,6 +601,14 @@ function generateWarName(war) {
             return `War over ${def} of ${year}`;
         case 'dp_native_uprising':
             return `${att} Uprising of ${year}`;
+        case 'revolution':
+        case 'dp_revolution':
+            // Revolutionary wars: named after the government being challenged (defender side)
+            return `${def} Revolutionary War of ${year}`;
+        case 'secession':
+        case 'dp_secession':
+            // Secession wars: named after the seceding nation (attacker side)
+            return `${att} War of Independence of ${year}`;
         default:
             // Generic fallback: "British-Russo War of 1840"
             return `${att}-${def} War of ${year}`;

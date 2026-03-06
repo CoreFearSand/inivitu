@@ -168,7 +168,14 @@ class DataProcessor:
             logger.debug(f"Inserted {metrics_inserted} metrics")
             
             # Step 3.4: Insert war data
-            playthrough_id = parsed_data.get('playthrough_id', save_id)
+            # Sanitise playthrough_id: must be a non-empty string; fall back to save_id
+            raw_pid = parsed_data.get('playthrough_id')
+            if raw_pid and isinstance(raw_pid, str) and raw_pid.strip():
+                playthrough_id = raw_pid.strip()
+            else:
+                playthrough_id = str(save_id)
+                if raw_pid is not None:
+                    logger.warning(f"Invalid playthrough_id {raw_pid!r}; falling back to save_id")
 
             # Parse game_date for marking absent wars as ended (same logic as save metadata)
             game_date_raw = parsed_data.get('date') or parsed_data.get('game_date', '')

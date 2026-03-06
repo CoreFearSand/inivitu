@@ -94,6 +94,10 @@ class DatabaseManager:
         # Use thread-local storage for connections
         if not hasattr(self._local, 'connection') or self._local.connection is None:
             try:
+                # check_same_thread=False is intentional: each thread gets its
+                # own connection stored in thread-local storage (_local.connection),
+                # so no connection is ever shared between threads.  SQLite's own
+                # thread safety warning therefore does not apply here.
                 conn = sqlite3.connect(
                     str(self.database_path),
                     timeout=30.0,
