@@ -8,7 +8,7 @@ victoria3_tracker/database/*.db-shm
 victoria3_tracker/database/*.db-wal
 
 # ── Database backups ──
-backup/
+victoria3_tracker/database/backup/
 
 # ── Logs ──
 logs/

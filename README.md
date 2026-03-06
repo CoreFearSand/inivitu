@@ -144,7 +144,8 @@ inivitu/
 │   │   ├── victoria3_data.db     # Live SQLite database (git-ignored)
 │   │   ├── schema.py             # Table definitions (Saves, Countries, Wars, Metrics…)
 │   │   ├── manager.py            # Connection lifecycle, execute_query, transactions
-│   │   └── data_access.py        # CRUD / query layer (DataAccessLayer)
+│   │   ├── data_access.py        # CRUD / query layer (DataAccessLayer)
+│   │   └── backup/               # Database backups (git-ignored)
 │   │
 │   ├── parser/
 │   │   ├── save_parser.py        # Runs rakaly.exe, parses JSON output
@@ -187,11 +188,9 @@ inivitu/
 │               ├── export.js     # Client-side export triggers
 │               └── config.js     # Config page logic
 │
-├── tests/
-│   ├── test_country_preservation.py
-│   └── test_country_bugs_exploration.py
-│
-└── backup/                       # Database backups (git-ignored)
+└── tests/
+    ├── test_country_preservation.py
+    └── test_country_bugs_exploration.py
 ```
 
 ## Process
