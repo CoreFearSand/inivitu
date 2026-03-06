@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+
+{% block title %}{{ country.country_info.name or country_tag }} - Victoria 3 Game Tracker{% endblock %}
+
+{% block extra_head %}
+<style>
+    .country-header {
+        background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+        color: white;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+    }
+    .country-flag {
+        width: 64px;
+        height: 48px;
+        background: #f8f9fa;
+        border: 2px solid #dee2e6;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        color: #495057;
+    }
+    .metric-card {
+        transition: transform 0.2s;
+        border: none;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    .metric-change {
+        font-size: 0.875rem;
+    }
+    .metric-change.positive {
+        color: #28a745;
+    }
+    .metric-change.negative {
+        color: #dc3545;
+    }
+    .chart-container {
+        height: 400px;
+        position: relative;
+    }
+    .player-badge {
+        background: linear-gradient(45deg, #ffd700, #ffed4e);
+        color: #333;
+        font-weight: bold;
+        border: 2px solid #ffc107;
+    }
+    .save-selector {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        padding: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Country Header -->
+<div class="country-header">
+    <div class="container-fluid">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <div class="country-flag">
+                    {{ country_tag }}
+                </div>
+            </div>
+            <div class="col">
+                <h1 class="mb-1">
+                    {{ country.country_info.name or country_tag }}
+                    {% if country.country_info.is_player_country %}
+                        <span class="badge player-badge ms-2">Player</span>
+                    {% endif %}
+                </h1>
+                <p class="mb-0 opacity-75">
+                    <i class="fas fa-calendar"></i> 
+                    Latest Data: {{ country.country_info.in_game_date or 'Unknown' }}
+                </p>
+            </div>
+            <div class="col-auto">
+                <div class="save-selector">
+                    <label for="playthrough-select" class="form-label text-white mb-2">Select Playthrough:</label>
+                    <select class="form-select" id="playthrough-select">
+                        <option value="">All Playthroughs</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Buttons -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-0">
+                    <li class="breadcrumb-item"><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('countries') }}">Countries</a></li>
+                    <li class="breadcrumb-item active">{{ country.country_info.name or country_tag }}</li>
+                </ol>
+            </nav>
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary" id="refresh-data">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="export-data">
+                    <i class="fas fa-download"></i> Export
+                </button>
+                <button type="button" class="btn btn-outline-info" id="compare-country">
+                    <i class="fas fa-balance-scale"></i> Compare
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Key Metrics Overview -->
+<div class="row mb-4" id="metrics-overview">
+    <div class="col-md-3">
+        <div class="card metric-card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">GDP</h5>
+                <div class="metric-value" id="metric-gdp">-</div>
+                <div class="metric-change" id="change-gdp">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric-card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">Population</h5>
+                <div class="metric-value" id="metric-population">-</div>
+                <div class="metric-change" id="change-population">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric-card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">Prestige</h5>
+                <div class="metric-value" id="metric-prestige">-</div>
+                <div class="metric-change" id="change-prestige">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric-card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">Military Size</h5>
+                <div class="metric-value" id="metric-military_size">-</div>
+                <div class="metric-change" id="change-military_size">-</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <div class="row align-items-center">
+                    <div class="col">
+                        <h5 class="card-title mb-0">Economic Metrics Over Time</h5>
+                    </div>
+                    <div class="col-auto">
+                        <select class="form-select form-select-sm" id="economic-metric-select">
+                            <option value="gdp">GDP</option>
+                            <option value="weekly_income">Weekly Income</option>
+                            <option value="money_holding">Money Holdings</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="economic-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <div class="row align-items-center">
+                    <div class="col">
+                        <h5 class="card-title mb-0">Social & Military Metrics</h5>
+                    </div>
+                    <div class="col-auto">
+                        <select class="form-select form-select-sm" id="social-metric-select">
+                            <option value="population">Population</option>
+                            <option value="literacy">Literacy</option>
+                            <option value="prestige">Prestige</option>
+                            <option value="military_size">Military Size</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="social-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Detailed Metrics Tabs -->
+<div class="row">
+    <div class="col-12">
+        <ul class="nav nav-tabs" id="country-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="metrics-tab" data-bs-toggle="tab" data-bs-target="#metrics-pane" type="button" role="tab">
+                    <i class="fas fa-chart-line"></i> All Metrics
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-pane" type="button" role="tab">
+                    <i class="fas fa-history"></i> Historical Data
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="comparison-tab" data-bs-toggle="tab" data-bs-target="#comparison-pane" type="button" role="tab">
+                    <i class="fas fa-balance-scale"></i> Compare
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="rankings-tab" data-bs-toggle="tab" data-bs-target="#rankings-pane" type="button" role="tab">
+                    <i class="fas fa-trophy"></i> Rankings
+                </button>
+            </li>
+        </ul>
+        
+        <div class="tab-content" id="country-tab-content">
+            <!-- All Metrics Tab -->
+            <div class="tab-pane fade show active" id="metrics-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="metrics-table">
+                                <thead>
+                                    <tr>
+                                        <th>Metric</th>
+                                        <th>Current Value</th>
+                                        <th>Change</th>
+                                        <th>Date</th>
+                                        <th>Rank</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="metrics-table-body">
+                                    <tr>
+                                        <td colspan="5" class="text-center">
+                                            <div class="spinner-border" role="status">
+                                                <span class="visually-hidden">Loading...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Historical Data Tab -->
+            <div class="tab-pane fade" id="history-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h5 class="card-title mb-0">Historical Trends</h5>
+                            </div>
+                            <div class="col-auto">
+                                <select class="form-select" id="history-metric-select">
+                                    <option value="gdp">GDP</option>
+                                    <option value="population">Population</option>
+                                    <option value="prestige">Prestige</option>
+                                    <option value="military_size">Military Size</option>
+                                    <option value="literacy">Literacy</option>
+                                    <option value="weekly_income">Weekly Income</option>
+                                    <option value="money_holding">Money Holdings</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="history-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Comparison Tab -->
+            <div class="tab-pane fade" id="comparison-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h5 class="card-title mb-0">Compare with Other Countries</h5>
+                            </div>
+                            <div class="col-auto">
+                                <select class="form-select" id="comparison-countries" multiple>
+                                    <!-- Populated by JavaScript -->
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body" id="comparison-content">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-info-circle fa-2x mb-3"></i>
+                            <p>Select countries to compare with {{ country.country_info.name or country_tag }}.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Rankings Tab -->
+            <div class="tab-pane fade" id="rankings-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h5 class="card-title mb-0">Country Rankings</h5>
+                            </div>
+                            <div class="col-auto">
+                                <select class="form-select" id="rankings-metric-select">
+                                    <option value="gdp">GDP</option>
+                                    <option value="population">Population</option>
+                                    <option value="prestige">Prestige</option>
+                                    <option value="military_size">Military Size</option>
+                                    <option value="literacy">Literacy</option>
+                                    <option value="weekly_income">Weekly Income</option>
+                                    <option value="money_holding">Money Holdings</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="rankings-table">
+                                <thead>
+                                    <tr>
+                                        <th>Rank</th>
+                                        <th>Country</th>
+                                        <th>Value</th>
+                                        <th>Difference</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rankings-table-body">
+                                    <tr>
+                                        <td colspan="4" class="text-center">
+                                            <div class="spinner-border" role="status">
+                                                <span class="visually-hidden">Loading...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Pass country data to JavaScript
+    window.countryData = {
+        tag: '{{ country_tag }}',
+        name: '{{ country.country_info.name or country_tag }}',
+        isPlayer: {{ 'true' if country.country_info.is_player_country else 'false' }},
+        latestDate: '{{ country.country_info.in_game_date or "" }}'
+    };
+</script>
+<script src="{{ url_for('static', filename='js/countries.js') }}"></script>
+{% endblock %}

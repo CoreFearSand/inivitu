@@ -72,7 +72,7 @@
                                         <span class="badge bg-primary">{{ save.metric_count or 0 }}</span>
                                     </td>
                                     <td>
-                                        <small class="text-muted">{{ format_file_size(save.file_size) if save.file_size else '-' }}</small>
+                                        <small class="text-muted">{{ save.file_size | filesizeformat if save.file_size else '-' }}</small>
                                     </td>
                                     <td>
                                         <small class="text-muted">
@@ -307,6 +307,3 @@ function formatFileSize(bytes) {
 }
 </script>
 {% endblock %}
-
-{# Template filter for file size formatting #}
-{% set format_file_size = formatFileSize %}

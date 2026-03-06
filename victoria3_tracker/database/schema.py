@@ -78,63 +78,71 @@ CREATE TABLE IF NOT EXISTS CountryMetrics (
     UNIQUE(country_id, metric_type_id, recorded_at)
 );
 
--- Wars table: Military conflicts data
+-- Wars table: Military conflicts tracked across a playthrough
 CREATE TABLE IF NOT EXISTS Wars (
-    war_id TEXT PRIMARY KEY NOT NULL,
-    save_id TEXT NOT NULL,
-    name TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    save_war_id TEXT NOT NULL,           -- numeric war ID from save file
+    playthrough_id TEXT NOT NULL,        -- groups the war across multiple saves
+    save_id TEXT NOT NULL,               -- most recent save where this war was observed
+    war_type TEXT NOT NULL,              -- diplomatic play type, e.g. 'dp_native_uprising'
+    strategic_region TEXT,               -- strategic region from diplomatic play
+    diplomatic_play_id TEXT,             -- numeric diplomatic play ID from save file
+    objective_state_id TEXT,             -- contested state ID from the diplomatic play
+    escalation INTEGER DEFAULT 0 CHECK (escalation >= 0 AND escalation <= 100),
+    initiator_maneuvers INTEGER DEFAULT 0 CHECK (initiator_maneuvers >= 0),
+    target_maneuvers INTEGER DEFAULT 0 CHECK (target_maneuvers >= 0),
+    global_avg_prestige REAL DEFAULT 0,  -- global avg prestige at war start (for GP detection)
+    global_max_prestige REAL DEFAULT 0,  -- global max prestige at war start (for GP detection)
     started_on DATE NOT NULL,
     ended_on DATE,
-    casus_belli TEXT,
     status TEXT NOT NULL DEFAULT 'ongoing',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
     CONSTRAINT valid_war_status CHECK (status IN ('ongoing', 'ended', 'white_peace')),
-    CONSTRAINT valid_war_dates CHECK (ended_on IS NULL OR ended_on >= started_on)
+    CONSTRAINT valid_war_dates CHECK (ended_on IS NULL OR ended_on >= started_on),
+    UNIQUE(save_war_id, playthrough_id)  -- one war record per playthrough
 );
 
--- War Participants: Countries involved in wars with detailed statistics
+-- War Participants: Countries involved in a war with their statistics
 CREATE TABLE IF NOT EXISTS WarParticipants (
     participant_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    war_id TEXT NOT NULL,
-    country_id INTEGER NOT NULL,
+    war_id INTEGER NOT NULL,             -- references Wars.id
+    country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
     side TEXT NOT NULL CHECK (side IN ('attacker', 'defender')),
-    war_score DECIMAL(5,2) DEFAULT 0.0,
-    casualties INTEGER DEFAULT 0 CHECK (casualties >= 0),
-    military_expenditure DECIMAL(15,2) DEFAULT 0.0 CHECK (military_expenditure >= 0),
-    war_cost DECIMAL(15,2) DEFAULT 0.0 CHECK (war_cost >= 0),
-    joined_date DATE,
+    war_support INTEGER DEFAULT 0 CHECK (war_support >= -100 AND war_support <= 100),
+    casualties DECIMAL(10,3) DEFAULT 0.0 CHECK (casualties >= 0),  -- fractional attrition values
+    materiel_cost DECIMAL(15,2) DEFAULT 0.0 CHECK (materiel_cost >= 0),  -- sum of goods consumed
+    wage_cost DECIMAL(15,2) DEFAULT 0.0 CHECK (wage_cost >= 0),
+    prestige_at_war_start REAL DEFAULT 0 CHECK (prestige_at_war_start >= 0),  -- prestige when war began
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (war_id) REFERENCES Wars(war_id) ON DELETE CASCADE,
-    FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
-    UNIQUE(war_id, country_id)
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (war_id) REFERENCES Wars(id) ON DELETE CASCADE,
+    UNIQUE(war_id, country_tag)
 );
 
--- Battles: Individual battle records
+-- Battles: Individual battle records from battle_manager
 CREATE TABLE IF NOT EXISTS Battles (
-    battle_id TEXT PRIMARY KEY NOT NULL,
-    war_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    occurred_on DATE NOT NULL,
-    location TEXT,
-    attacker_country_id INTEGER NOT NULL,
-    defender_country_id INTEGER NOT NULL,
+    battle_id TEXT PRIMARY KEY NOT NULL,  -- composite key built from war_id + battle index
+    war_id INTEGER NOT NULL,              -- references Wars.id
+    name TEXT,
+    occurred_on DATE,
+    location_province_id TEXT,
+    attacker_tag TEXT NOT NULL CHECK (length(attacker_tag) = 3),
+    defender_tag TEXT NOT NULL CHECK (length(defender_tag) = 3),
     attacker_casualties INTEGER DEFAULT 0 CHECK (attacker_casualties >= 0),
     defender_casualties INTEGER DEFAULT 0 CHECK (defender_casualties >= 0),
-    winner_country_id INTEGER,
+    winner_tag TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (war_id) REFERENCES Wars(war_id) ON DELETE CASCADE,
-    FOREIGN KEY (attacker_country_id) REFERENCES Countries(country_id),
-    FOREIGN KEY (defender_country_id) REFERENCES Countries(country_id),
-    FOREIGN KEY (winner_country_id) REFERENCES Countries(country_id),
-    CONSTRAINT different_combatants CHECK (attacker_country_id != defender_country_id)
+    FOREIGN KEY (war_id) REFERENCES Wars(id) ON DELETE CASCADE,
+    CONSTRAINT different_combatants CHECK (attacker_tag != defender_tag)
 );
 
 -- Processing Log: Track file processing history and errors
 CREATE TABLE IF NOT EXISTS ProcessingLog (
     log_id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('success', 'error', 'skipped')),
+    status TEXT NOT NULL CHECK (status IN ('processing', 'success', 'error', 'skipped')),
     error_message TEXT,
     processing_started_at TIMESTAMP NOT NULL,
     processing_completed_at TIMESTAMP,
@@ -179,7 +187,11 @@ CREATE INDEX IF NOT EXISTS idx_metrics_country_date ON CountryMetrics(country_id
 CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON CountryMetrics(metric_type_id, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_metrics_save_id ON CountryMetrics(save_id);
 CREATE INDEX IF NOT EXISTS idx_wars_save_id ON Wars(save_id);
+CREATE INDEX IF NOT EXISTS idx_wars_playthrough_id ON Wars(playthrough_id);
+CREATE INDEX IF NOT EXISTS idx_wars_save_war_id ON Wars(save_war_id);
+CREATE INDEX IF NOT EXISTS idx_wars_status ON Wars(status);
 CREATE INDEX IF NOT EXISTS idx_war_participants_war_id ON WarParticipants(war_id);
+CREATE INDEX IF NOT EXISTS idx_war_participants_country_tag ON WarParticipants(country_tag);
 CREATE INDEX IF NOT EXISTS idx_battles_war_id ON Battles(war_id);
 CREATE INDEX IF NOT EXISTS idx_processing_log_filename ON ProcessingLog(filename);
 CREATE INDEX IF NOT EXISTS idx_processing_log_status ON ProcessingLog(status);
@@ -213,6 +225,24 @@ WHERE cm.recorded_at = (
     WHERE cm2.country_id = cm.country_id 
     AND cm2.metric_type_id = cm.metric_type_id
 );
+
+-- Active wars with participant counts
+CREATE VIEW IF NOT EXISTS ActiveWars AS
+SELECT
+    w.id,
+    w.save_war_id,
+    w.playthrough_id,
+    w.war_type,
+    w.strategic_region,
+    w.started_on,
+    w.status,
+    COUNT(CASE WHEN wp.side = 'attacker' THEN 1 END) AS attacker_count,
+    COUNT(CASE WHEN wp.side = 'defender' THEN 1 END) AS defender_count,
+    SUM(wp.casualties) AS total_casualties
+FROM Wars w
+LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+WHERE w.status = 'ongoing'
+GROUP BY w.id;
 
 -- Country rankings by metric
 CREATE VIEW IF NOT EXISTS CountryRankings AS
@@ -330,6 +360,34 @@ def verify_schema(connection: sqlite3.Connection) -> bool:
         logger.error(f"Schema verification failed: {e}")
         return False
 
+def migrate_schema(connection: sqlite3.Connection) -> None:
+    """Apply incremental schema migrations to an existing database.
+
+    Each migration is idempotent — running it on a database that already has
+    the column is safe (the ALTER TABLE is silently ignored).
+
+    Args:
+        connection: SQLite database connection
+    """
+    migrations = [
+        # v1.2.0 — war naming / GP detection columns
+        "ALTER TABLE Wars ADD COLUMN global_avg_prestige REAL DEFAULT 0",
+        "ALTER TABLE Wars ADD COLUMN global_max_prestige REAL DEFAULT 0",
+        "ALTER TABLE WarParticipants ADD COLUMN prestige_at_war_start REAL DEFAULT 0",
+    ]
+    cursor = connection.cursor()
+    for sql in migrations:
+        try:
+            cursor.execute(sql)
+            logger.info(f"Migration applied: {sql[:60]}…")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                pass  # column already exists — safe to ignore
+            else:
+                raise
+    connection.commit()
+
+
 def get_schema_version() -> str:
     """Get the current schema version."""
-    return "1.0.0"
+    return "1.2.0"

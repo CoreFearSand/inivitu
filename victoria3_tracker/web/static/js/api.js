@@ -178,6 +178,62 @@ async function getPlaythroughs() {
     return apiRequest('/api/playthroughs');
 }
 
+// ─── War API helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Get list of wars with optional filtering
+ * @param {Object} params - { country, playthrough_id, status, limit }
+ */
+async function getWars(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiRequest(`/api/wars${qs ? '?' + qs : ''}`);
+}
+
+/**
+ * Get detailed information about a specific war by its DB id
+ * @param {number} warDbId - Wars.id (integer PK)
+ */
+async function getWarDetails(warDbId) {
+    return apiRequest(`/api/wars/${warDbId}`);
+}
+
+/**
+ * Get overall war statistics summary
+ * @param {Object} params - { playthrough_id }
+ */
+async function getWarStatistics(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiRequest(`/api/wars/statistics${qs ? '?' + qs : ''}`);
+}
+
+/**
+ * Get war timeline events
+ * @param {Object} params - { playthrough_id, start_date, end_date, limit }
+ */
+async function getWarTimeline(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiRequest(`/api/wars/timeline${qs ? '?' + qs : ''}`);
+}
+
+/**
+ * Get battles with optional filtering
+ * @param {Object} params - { war_id, country, limit }
+ */
+async function getBattles(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiRequest(`/api/battles${qs ? '?' + qs : ''}`);
+}
+
+/**
+ * Get war performance statistics for a country
+ * @param {string} countryTag - 3-letter country tag
+ * @param {Object} params - { playthrough_id }
+ */
+async function getCountryWarPerformance(countryTag, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiRequest(`/api/countries/${countryTag}/war-performance${qs ? '?' + qs : ''}`);
+}
+
 // Utility functions
 
 /**
@@ -341,6 +397,279 @@ function debounce(func, wait, immediate) {
     };
 }
 
+// ─── CSV map loader (shared internal helper) ─────────────────────────────────
+
+/**
+ * Fetch a two-column Tag,Value CSV and populate targetMap.
+ * First column (tag) is always upper-cased before storage.
+ * An optional valueTransform function is applied to each value before storing
+ * (e.g. toTitleCase for country names, identity for pre-cased adjectives).
+ *
+ * @param {string}   url            - URL of the CSV file to fetch
+ * @param {Object}   targetMap      - Map to populate {TAG: value}
+ * @param {Function} [valueTransform] - Optional transform for the value column
+ * @returns {Promise<number>}  Number of entries loaded
+ */
+async function _loadCSVMap(url, targetMap, valueTransform = null) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const lines = (await r.text()).split('\n');
+    let count = 0;
+    for (let i = 1; i < lines.length; i++) {   // skip header row
+        const line = lines[i].trim();
+        if (!line) continue;
+        const comma = line.indexOf(',');
+        if (comma === -1) continue;
+        const tag = line.substring(0, comma).trim().toUpperCase();
+        const val = line.substring(comma + 1).trim();
+        if (tag && val) {
+            targetMap[tag] = valueTransform ? valueTransform(val) : val;
+            count++;
+        }
+    }
+    return count;
+}
+
+// ─── Country name lookup (shared across all pages) ───────────────────────────
+
+/**
+ * Shared Victoria 3 country tag → English display name map.
+ * Populated from /static/country_names.csv on first call to loadCountryNamesCSV().
+ */
+const V3CountryNames = {};
+let _csvLoaded = false;
+
+/** Capitalise the first letter of every word: "great britain" → "Great Britain". */
+function toTitleCase(str) {
+    return str.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Return the English display name for a Victoria 3 country tag.
+ * Falls back to the uppercased raw tag when no name is known.
+ * @param {string} tag - 3-letter country tag (case-insensitive)
+ */
+function getCountryName(tag) {
+    if (!tag) return '—';
+    return V3CountryNames[tag.toUpperCase()] || tag.toUpperCase();
+}
+
+/**
+ * Fetch /static/country_names.csv and populate V3CountryNames.
+ * Idempotent — subsequent calls return immediately without re-fetching.
+ */
+async function loadCountryNamesCSV() {
+    if (_csvLoaded) return;
+    try {
+        const count = await _loadCSVMap('/static/country_names.csv', V3CountryNames, toTitleCase);
+        _csvLoaded = true;
+        console.debug(`[V3] Loaded ${count} country names from CSV`);
+    } catch (err) {
+        console.warn('Could not load country_names.csv:', err);
+    }
+}
+
+// ─── War adjective / name lookup (shared across all pages) ───────────────────
+
+/**
+ * Shared Victoria 3 country tag → war adjective map.
+ * e.g.  GBR → "British",  RUS → "Russo",  CHI → "Sino"
+ * Populated from /static/war_adjectives.csv on first call to loadWarAdjectivesCSV().
+ */
+const V3WarAdjectives = {};
+let _warAdjCsvLoaded = false;
+
+/**
+ * Fetch /static/war_adjectives.csv and populate V3WarAdjectives.
+ * Idempotent — subsequent calls return immediately without re-fetching.
+ */
+async function loadWarAdjectivesCSV() {
+    if (_warAdjCsvLoaded) return;
+    try {
+        // No transform needed — adjectives are already correctly cased in the CSV
+        const count = await _loadCSVMap('/static/war_adjectives.csv', V3WarAdjectives);
+        _warAdjCsvLoaded = true;
+        console.debug(`[V3] Loaded ${count} war adjectives from CSV`);
+    } catch (err) {
+        console.warn('Could not load war_adjectives.csv:', err);
+    }
+}
+
+/**
+ * Return the war-naming adjective for a country tag.
+ * Priority: war_adjectives.csv → last word of full country name → raw tag.
+ * @param {string} tag - 3-letter country tag (case-insensitive)
+ */
+function getWarAdjective(tag) {
+    if (!tag) return 'Unknown';
+    const upper = tag.toUpperCase();
+    if (V3WarAdjectives[upper]) return V3WarAdjectives[upper];
+    // Fallback: last word of the country's full name
+    const fullName = V3CountryNames[upper];
+    if (fullName) {
+        const words = fullName.trim().split(/\s+/);
+        return words[words.length - 1];
+    }
+    return upper;   // final fallback: raw tag
+}
+
+/**
+ * Convert a V3 strategic_region string into a human-readable place name.
+ * e.g. "region_central_america" → "Central America"
+ *
+ * Kept as a dedicated function so future enhancements (custom region CSV,
+ * abbreviation overrides, etc.) only require changes here.
+ *
+ * @param {string} regionStr - Raw region string from the API
+ */
+function formatRegion(regionStr) {
+    if (!regionStr) return 'Unknown Region';
+    return regionStr
+        .replace(/^region_/, '')          // strip leading 'region_'
+        .replace(/_/g, ' ')               // underscores → spaces
+        .replace(/\b\w/g, c => c.toUpperCase()); // title-case
+}
+
+/**
+ * Generate a historically-flavoured war name from a war object.
+ *
+ * The war object must contain (at minimum):
+ *   war_type, started_on, strategic_region,
+ *   main_attacker_tag, main_defender_tag,
+ *   gp_attacker_tags  (comma-separated string or null),
+ *   gp_defender_tags  (comma-separated string or null)
+ *
+ * @param {Object} war - War data object (from API or constructed manually)
+ * @returns {string} Generated war name, e.g. "British-Russo War of 1840"
+ */
+function generateWarName(war) {
+    const year = war.started_on ? war.started_on.substring(0, 4) : '????';
+    const type = (war.war_type || 'unknown').toLowerCase();
+
+    // Parse GP tag lists (API returns comma-separated strings)
+    const gpAtt = war.gp_attacker_tags
+        ? war.gp_attacker_tags.split(',').map(t => t.trim()).filter(Boolean)
+        : [];
+    const gpDef = war.gp_defender_tags
+        ? war.gp_defender_tags.split(',').map(t => t.trim()).filter(Boolean)
+        : [];
+
+    /**
+     * Build the display label for one side.
+     * – If 2+ GPs: join all their adjectives with '-'  ("British-Franco")
+     * – If 1 GP: use that GP's adjective
+     * – Otherwise: use the main participant's adjective
+     */
+    function sideLabel(gpTags, mainTag) {
+        if (gpTags.length >= 2) return gpTags.map(getWarAdjective).join('-');
+        const tag = gpTags.length === 1 ? gpTags[0] : mainTag;
+        return tag ? getWarAdjective(tag) : 'Unknown';
+    }
+
+    const att = sideLabel(gpAtt, war.main_attacker_tag);
+    const def = sideLabel(gpDef, war.main_defender_tag);
+
+    // If both sides are unknown (e.g. Paradox wars with 0 participants),
+    // fall back to a type+region+year label instead of "Unknown-Unknown War of YYYY"
+    if (att === 'Unknown' && def === 'Unknown') {
+        if (war.strategic_region) {
+            return `Conflict over ${formatRegion(war.strategic_region)} (${year})`;
+        }
+        const typeLabel = type !== 'unknown' ? formatWarType(type) : 'Conflict';
+        return `${typeLabel} of ${year}`;
+    }
+
+    switch (type) {
+        case 'dp_independence':
+            return `${att} War of Independence of ${year}`;
+        case 'dp_return_state':
+            return `War for ${formatRegion(war.strategic_region)} of ${year}`;
+        case 'dp_annex':
+            return `${att} Annexation of ${def} (${year})`;
+        case 'dp_conquer':
+            return `${att}-${def} Conquest War of ${year}`;
+        case 'dp_humiliate':
+            return `${att}-${def} Humiliation War of ${year}`;
+        case 'dp_liberate':
+            return `${att} Liberation War of ${year}`;
+        case 'dp_open_market':
+            return `${att} Trade War with ${def} of ${year}`;
+        case 'dp_form_puppet':
+        case 'dp_make_tributary':
+            return `${att}-${def} Subjugation War of ${year}`;
+        case 'dp_transfer_subject':
+            return `War over ${def} of ${year}`;
+        case 'dp_native_uprising':
+            return `${att} Uprising of ${year}`;
+        default:
+            // Generic fallback: "British-Russo War of 1840"
+            return `${att}-${def} War of ${year}`;
+    }
+}
+
+// ─── Shared UI helpers ────────────────────────────────────────────────────────
+
+/**
+ * Bootstrap spinner wrapped in a centred div — use inside any container element.
+ * @param {string} msg - Screen-reader label (default 'Loading…')
+ */
+function spinnerHTML(msg = 'Loading…') {
+    return `
+        <div class="text-center py-3">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">${msg}</span>
+            </div>
+        </div>`;
+}
+
+/**
+ * Bootstrap spinner wrapped in a full-width table row — use inside <tbody>.
+ * @param {number} colspan  - Number of columns the cell should span
+ * @param {string} msg      - Screen-reader label (default 'Loading…')
+ */
+function tableSpinnerHTML(colspan, msg = 'Loading…') {
+    return `
+        <tr><td colspan="${colspan}" class="text-center py-3">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">${msg}</span>
+            </div>
+        </td></tr>`;
+}
+
+/**
+ * Rank badge for top-N lists.
+ *   index 0 → gold (bg-warning)
+ *   index 1 → silver (bg-secondary)
+ *   index 2 → bronze (bg-info)
+ *   index 3+ → plain (bg-light text-dark)
+ *
+ * @param {number} index       - 0-based position
+ * @param {string} extraClasses - Optional extra CSS classes (e.g. 'me-2')
+ */
+function rankBadge(index, extraClasses = '') {
+    const cls = index === 0 ? 'bg-warning'
+              : index === 1 ? 'bg-secondary'
+              : index === 2 ? 'bg-info'
+              : 'bg-light text-dark';
+    const extra = extraClasses ? ' ' + extraClasses : '';
+    return `<span class="badge ${cls}${extra}">${index + 1}</span>`;
+}
+
+/** Set Chart.js global font/colour defaults. Safe to call before charts exist. */
+function setupChartDefaults() {
+    if (typeof Chart === 'undefined') return;
+    Chart.defaults.font.family = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+    Chart.defaults.color       = '#666';
+    Chart.defaults.borderColor = '#e0e0e0';
+}
+
+// Kick off early initialisation as soon as the DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    loadCountryNamesCSV();
+    loadWarAdjectivesCSV();
+    setupChartDefaults();
+});
+
 // Export functions for use in other scripts
 window.apiRequest = apiRequest;
 window.getHealth = getHealth;
@@ -363,3 +692,30 @@ window.showAlert = showAlert;
 window.showLoading = showLoading;
 window.hideLoading = hideLoading;
 window.debounce = debounce;
+
+// Country name lookup exports
+window.V3CountryNames        = V3CountryNames;
+window.toTitleCase           = toTitleCase;
+window.getCountryName        = getCountryName;
+window.loadCountryNamesCSV   = loadCountryNamesCSV;
+
+// War naming exports
+window.V3WarAdjectives       = V3WarAdjectives;
+window.loadWarAdjectivesCSV  = loadWarAdjectivesCSV;
+window.getWarAdjective       = getWarAdjective;
+window.formatRegion          = formatRegion;
+window.generateWarName       = generateWarName;
+
+// Shared UI helper exports
+window.spinnerHTML           = spinnerHTML;
+window.tableSpinnerHTML      = tableSpinnerHTML;
+window.rankBadge             = rankBadge;
+window.setupChartDefaults    = setupChartDefaults;
+
+// War API exports
+window.getWars = getWars;
+window.getWarDetails = getWarDetails;
+window.getWarStatistics = getWarStatistics;
+window.getWarTimeline = getWarTimeline;
+window.getBattles = getBattles;
+window.getCountryWarPerformance = getCountryWarPerformance;

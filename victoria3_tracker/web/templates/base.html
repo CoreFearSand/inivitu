@@ -50,6 +50,10 @@
                         <a class="nav-link {% if request.endpoint == 'saves' %}active{% endif %}" 
                            href="{{ url_for('saves') }}">Saves</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'wars' %}active{% endif %}" 
+                           href="{{ url_for('wars') }}">Wars</a>
+                    </li>
                 </ul>
                 
                 <ul class="navbar-nav">

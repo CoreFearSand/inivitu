@@ -19,6 +19,12 @@ from .web import WebServer
 
 logger = logging.getLogger(__name__)
 
+# --- Application-level constants ---
+STATS_LOG_INTERVAL_SECONDS = 300       # Log stats every 5 minutes
+MAX_ERRORS_BEFORE_SHUTDOWN = 10        # Consecutive errors before giving up
+ERROR_RATE_WINDOW_SECONDS = 60         # Time window for error rate check
+
+
 class Victoria3Tracker:
     """Main application class that orchestrates all components."""
     
@@ -211,15 +217,14 @@ class Victoria3Tracker:
     def _main_loop(self):
         """Main application loop with component monitoring."""
         last_stats_log = 0
-        stats_interval = 300  # Log stats every 5 minutes
-        
+
         while self.running:
             try:
                 time.sleep(1)
-                
+
                 # Periodically log statistics
                 current_time = time.time()
-                if current_time - last_stats_log > stats_interval:
+                if current_time - last_stats_log > STATS_LOG_INTERVAL_SECONDS:
                     self._log_statistics()
                     last_stats_log = current_time
                 
@@ -310,10 +315,17 @@ class Victoria3Tracker:
         try:
             if self.data_processor:
                 success = self.data_processor.process_save_file(file_path)
-                
-                # WebSocket broadcasting disabled
-                pass
-                
+
+                # Broadcast update via WebSocket if enabled and processing succeeded
+                if success and self.web_server and self.web_server.websocket_handler:
+                    try:
+                        self.web_server.websocket_handler.broadcast_new_save({
+                            'filename': file_path.name,
+                            'timestamp': time.time()
+                        })
+                    except Exception as ws_error:
+                        logger.warning(f"WebSocket broadcast failed: {ws_error}")
+
                 return success
             else:
                 logger.error("Data processor not available")
@@ -423,7 +435,7 @@ class Victoria3Tracker:
         logger.error(error_msg, exc_info=True)
         
         # If too many errors in a short time, consider shutting down
-        if self.error_count > 10 and (time.time() - self.last_error_time) < 60:
+        if self.error_count > MAX_ERRORS_BEFORE_SHUTDOWN and (time.time() - self.last_error_time) < ERROR_RATE_WINDOW_SECONDS:
             logger.critical("Too many errors in short time, initiating shutdown")
             self.running = False
 

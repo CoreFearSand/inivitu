@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Any, Dict, List, Tuple
 from contextlib import contextmanager
 
-from .schema import create_schema, verify_schema, get_schema_version
+from .schema import create_schema, migrate_schema, verify_schema, get_schema_version
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,10 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 # Create schema if needed
                 create_schema(conn)
-                
+
+                # Apply incremental migrations (idempotent — safe on fresh DBs too)
+                migrate_schema(conn)
+
                 # Verify schema integrity
                 if not verify_schema(conn):
                     raise RuntimeError("Database schema verification failed")
@@ -237,21 +240,24 @@ class DatabaseManager:
                 try:
                     result = self.execute_query(f"SELECT COUNT(*) FROM {table}")
                     stats[f'{table.lower()}_count'] = result[0][0]
-                except:
+                except Exception as e:
+                    logger.warning(f"Could not get row count for {table}: {e}")
                     stats[f'{table.lower()}_count'] = 0
-            
+
             # Schema version
             try:
                 result = self.execute_query("SELECT value FROM schema_info WHERE key = 'version'")
                 stats['schema_version'] = result[0][0] if result else 'unknown'
-            except:
+            except Exception as e:
+                logger.warning(f"Could not get schema version: {e}")
                 stats['schema_version'] = 'unknown'
-            
+
             # WAL mode info
             try:
                 result = self.execute_query("PRAGMA journal_mode")
                 stats['journal_mode'] = result[0][0]
-            except:
+            except Exception as e:
+                logger.warning(f"Could not get journal mode: {e}")
                 stats['journal_mode'] = 'unknown'
             
             return stats

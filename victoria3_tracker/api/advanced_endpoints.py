@@ -173,7 +173,7 @@ class AdvancedEndpoints:
                     trend_data = self.db_manager.execute_query(trend_query, trend_params)
                     
                     trends[country_tag] = {
-                        'name': country['name'],
+                        'name': self.api.get_country_display_name(country_tag),
                         'data': [{'value': row['amount'], 'date': row['date']} for row in trend_data]
                     }
                 
@@ -304,9 +304,10 @@ class AdvancedEndpoints:
                 
                 countries = []
                 for row in results:
+                    tag = row['country_tag']
                     countries.append({
-                        'country_tag': row['country_tag'],
-                        'name': row['name'],
+                        'country_tag': tag,
+                        'name': self.api.get_country_display_name(tag),
                         'is_player_country': bool(row['is_player_country']),
                         'latest_date': row['latest_date']
                     })

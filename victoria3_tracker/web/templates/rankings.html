@@ -126,8 +126,10 @@
 let rankingsChart = null;
 let comparisonChart = null;
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadCountryNamesCSV();   // ensure names are ready before rendering
     setupRankingsPage();
+    loadRankings('{{ current_metric }}');   // re-render server table with proper names
     loadRankingsChart('{{ current_metric }}');
     loadMetricComparison();
 });
@@ -163,17 +165,14 @@ async function loadRankings(metric) {
         let html = '';
         if (data.rankings && data.rankings.length > 0) {
             data.rankings.forEach((country, index) => {
-                const badgeClass = index < 3 ? 'bg-warning' : 'bg-light text-dark';
                 html += `
                     <tr>
+                        <td>${rankBadge(index)}</td>
                         <td>
-                            <span class="badge ${badgeClass}">${index + 1}</span>
+                            <strong>${getCountryName(country.country_tag)}</strong>
                         </td>
                         <td>
-                            <strong>${country.name || country.country_tag}</strong>
-                        </td>
-                        <td>
-                            <code>${country.country_tag}</code>
+                            <code>${country.country_tag.toUpperCase()}</code>
                         </td>
                         <td class="text-end">
                             <strong>${formatNumber(country.amount)}</strong>
@@ -235,7 +234,7 @@ async function loadRankingsChart(metric) {
             return;
         }
         
-        const labels = data.rankings.map(country => country.name || country.country_tag);
+        const labels = data.rankings.map(country => getCountryName(country.country_tag));
         const values = data.rankings.map(country => country.amount);
         
         rankingsChart = new Chart(ctx, {
@@ -340,7 +339,7 @@ async function loadMetricComparison() {
         comparisonChart = new Chart(ctx, {
             type: 'radar',
             data: {
-                labels: countries,
+                labels: countries.map(tag => getCountryName(tag)),
                 datasets: datasets
             },
             options: {

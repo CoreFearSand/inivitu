@@ -147,7 +147,7 @@ def validate_environment():
     if not rakaly_available:
         print("❌ rakaly.exe not found")
         print("   rakaly.exe is required to parse Victoria 3 save files")
-        print("   Download from: https://github.com/rakaly/cli/releases/")
+        print("   Download from: https://github.com/rakaly/rakaly/releases")
         print("   Place rakaly.exe in the project directory")
         return False
     else:

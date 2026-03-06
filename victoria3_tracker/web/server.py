@@ -5,6 +5,9 @@ Serves the web interface and integrates with the REST API.
 """
 
 import logging
+import csv
+import os
+import secrets
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from pathlib import Path
 
@@ -27,6 +30,9 @@ class WebServer:
         self.config = config
         self.db_manager = db_manager
         
+        # Load country name mapping
+        self.country_names = self._load_country_names()
+        
         # Create Flask app
         self.app = Flask(
             __name__,
@@ -34,8 +40,8 @@ class WebServer:
             static_folder=str(Path(__file__).parent / 'static')
         )
         
-        # Configure Flask app
-        self.app.config['SECRET_KEY'] = 'victoria3-game-tracker-secret-key'
+        # Configure Flask app - use env var if set, otherwise generate a random key
+        self.app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
         self.app.config['JSON_SORT_KEYS'] = False
         
         # Initialize API
@@ -46,8 +52,63 @@ class WebServer:
         
         # Register web routes
         self._register_web_routes()
-        
+
+        # Initialize WebSocket handler if enabled in config
+        self.websocket_handler = None
+        if self.config.get('enable_websocket', False):
+            try:
+                from ..api.websocket_handler import WebSocketHandler
+                self.websocket_handler = WebSocketHandler(self.app, self.db_manager)
+                logger.info("WebSocket handler initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize WebSocket handler: {e}. WebSocket disabled.")
+
         logger.info("Web server initialized")
+    
+    def _load_country_names(self):
+        """Load country name mapping from CSV file.
+        
+        Returns:
+            dict: Mapping of country tags to readable names
+        """
+        country_names = {}
+        csv_path = Path(__file__).parent / 'static' / 'country_names.csv'
+        
+        try:
+            if csv_path.exists():
+                with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        tag = row.get('Tag', '').strip().upper()
+                        name = row.get('Main Alias', '').strip()
+                        if tag and name:
+                            # Capitalize first letter of each word for display
+                            display_name = ' '.join(word.capitalize() for word in name.split())
+                            country_names[tag] = display_name
+                
+                logger.info(f"Loaded {len(country_names)} country name mappings")
+            else:
+                logger.warning(f"Country names CSV file not found at {csv_path}")
+                
+        except Exception as e:
+            logger.error(f"Error loading country names CSV: {e}")
+        
+        return country_names
+    
+    def get_country_display_name(self, country_tag):
+        """Get display name for a country tag.
+        
+        Args:
+            country_tag: 3-letter country code
+            
+        Returns:
+            str: Readable country name or the tag if no mapping exists
+        """
+        if not country_tag:
+            return ''
+        
+        tag_upper = country_tag.upper()
+        return self.country_names.get(tag_upper, country_tag.upper())
     
     def _create_api_blueprint(self):
         """Create API blueprint from the Victoria3API app."""
@@ -172,6 +233,32 @@ class WebServer:
                                      saves=[],
                                      error="Failed to load saves data")
         
+        @self.app.route('/wars')
+        def wars():
+            """War statistics page."""
+            try:
+                # Get initial war statistics for page load
+                war_stats = self._get_war_statistics_summary()
+                
+                # Get available countries for filtering
+                countries_data = self._get_countries_data()
+                
+                # Get available playthroughs
+                playthroughs = self._get_available_playthroughs()
+                
+                return render_template('wars.html',
+                                     war_stats=war_stats,
+                                     countries=countries_data.get('countries', []),
+                                     playthroughs=playthroughs,
+                                     page_title='War Statistics')
+            except Exception as e:
+                logger.error(f"Error loading wars page: {e}")
+                return render_template('wars.html',
+                                     war_stats={},
+                                     countries=[],
+                                     playthroughs=[],
+                                     error="Failed to load war statistics data")
+        
         @self.app.route('/api-docs')
         def api_docs():
             """API documentation page."""
@@ -255,14 +342,19 @@ class WebServer:
                 JOIN Saves s ON c.save_id = s.save_id
                 GROUP BY c.country_tag, c.name, c.is_player_country
                 ORDER BY c.name
-                LIMIT 100
             """)
             
             countries = []
             for row in results:
+                # Use CSV mapping for display name, fallback to database name or tag
+                display_name = self.get_country_display_name(row['country_tag'])
+                if not display_name or display_name == row['country_tag'].upper():
+                    display_name = row['name'] or row['country_tag']
+                
                 countries.append({
                     'country_tag': row['country_tag'],
-                    'name': row['name'],
+                    'name': display_name,  # This is now the readable display name
+                    'database_name': row['name'],  # Keep original database name for reference
                     'is_player_country': bool(row['is_player_country']),
                     'latest_date': row['latest_date'],
                     'save_count': row['save_count']
@@ -279,14 +371,8 @@ class WebServer:
         try:
             from ..database import DataAccessLayer
             data_access = DataAccessLayer(self.db_manager)
-            
-            # Get latest metrics
-            latest_metrics = data_access.get_latest_metrics_for_country(country_tag)
-            
-            if not latest_metrics:
-                return None
-            
-            # Get country info
+
+            # Get country info first — return None only if country doesn't exist
             country_info = self.db_manager.execute_query("""
                 SELECT DISTINCT c.name, c.is_player_country, s.in_game_date
                 FROM Countries c
@@ -295,13 +381,24 @@ class WebServer:
                 ORDER BY s.saved_at DESC
                 LIMIT 1
             """, (country_tag,))
-            
+
             if not country_info:
                 return None
-            
+
+            # Get latest metrics (may be empty for countries without recorded metrics)
+            latest_metrics = data_access.get_latest_metrics_for_country(country_tag)
+
+            info = dict(country_info[0])
+            # Apply CSV name mapping for display
+            display_name = self.get_country_display_name(country_tag)
+            if display_name and display_name != country_tag.upper():
+                info['name'] = display_name
+            elif not info.get('name'):
+                info['name'] = country_tag.upper()
+
             return {
                 'country_tag': country_tag,
-                'country_info': dict(country_info[0]),
+                'country_info': info,
                 'latest_metrics': latest_metrics
             }
             
@@ -353,6 +450,80 @@ class WebServer:
             logger.error(f"Error getting metrics: {e}")
             return []
     
+    def _get_war_statistics_summary(self):
+        """Get war statistics summary for initial page load."""
+        try:
+            from ..database import DataAccessLayer
+            data_access = DataAccessLayer(self.db_manager)
+            
+            # Get overall war statistics
+            war_stats_query = """
+                SELECT
+                    COUNT(DISTINCT w.id) as total_wars,
+                    COUNT(DISTINCT CASE WHEN w.status = 'ongoing' THEN w.id END) as ongoing_wars,
+                    COUNT(DISTINCT CASE WHEN w.status = 'ended' THEN w.id END) as ended_wars,
+                    COUNT(DISTINCT CASE WHEN w.status = 'white_peace' THEN w.id END) as white_peace_wars,
+                    COALESCE(SUM(wp.casualties), 0) as total_casualties,
+                    COALESCE(SUM(wp.materiel_cost + wp.wage_cost), 0) as total_war_cost,
+                    COUNT(DISTINCT wp.country_tag) as countries_involved
+                FROM Wars w
+                LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+            """
+            
+            war_stats = self.db_manager.execute_query(war_stats_query)
+            
+            # Get battle statistics
+            battle_stats_query = """
+                SELECT 
+                    COUNT(*) as total_battles,
+                    COALESCE(SUM(b.attacker_casualties + b.defender_casualties), 0) as total_battle_casualties
+                FROM Battles b
+            """
+            
+            battle_stats = self.db_manager.execute_query(battle_stats_query)
+            
+            # Combine results
+            result = {}
+            if war_stats:
+                result.update(dict(war_stats[0]))
+            if battle_stats:
+                result.update(dict(battle_stats[0]))
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting war statistics summary: {e}")
+            return {}
+    
+    def _get_available_playthroughs(self):
+        """Get available playthroughs for filtering."""
+        try:
+            results = self.db_manager.execute_query("""
+                SELECT DISTINCT s.playthrough_id, 
+                       MIN(s.saved_at) as first_save,
+                       MAX(s.saved_at) as last_save,
+                       COUNT(*) as save_count
+                FROM Saves s
+                WHERE s.playthrough_id IS NOT NULL
+                GROUP BY s.playthrough_id
+                ORDER BY first_save DESC
+            """)
+            
+            playthroughs = []
+            for row in results:
+                playthroughs.append({
+                    'playthrough_id': row['playthrough_id'],
+                    'first_save': row['first_save'],
+                    'last_save': row['last_save'],
+                    'save_count': row['save_count']
+                })
+            
+            return playthroughs
+            
+        except Exception as e:
+            logger.error(f"Error getting playthroughs: {e}")
+            return []
+    
     def run(self, host: str = '127.0.0.1', port: int = None, debug: bool = False):
         """Run the web server.
         
@@ -367,11 +538,21 @@ class WebServer:
         logger.info(f"Starting Victoria 3 web server on {host}:{port}")
         
         try:
-            # Use regular Flask server (WebSocket disabled)
-            self.app.run(
-                host=host,
-                port=port,
-                debug=debug,
+            if self.websocket_handler:
+                # Use SocketIO server for real-time WebSocket support
+                logger.info("Starting with WebSocket support enabled")
+                self.websocket_handler.socketio.run(
+                    self.app,
+                    host=host,
+                    port=port,
+                    debug=debug
+                )
+            else:
+                # Use regular Flask server
+                self.app.run(
+                    host=host,
+                    port=port,
+                    debug=debug,
                     threaded=True
                 )
         except Exception as e:

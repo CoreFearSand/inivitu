@@ -5,7 +5,11 @@ Provides REST endpoints for accessing game data and statistics.
 """
 
 import logging
-from flask import Flask, jsonify, request, abort
+import csv
+import io
+import time
+import uuid
+from flask import Flask, jsonify, request, abort, g, Response
 from flask_cors import CORS
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -13,6 +17,8 @@ from pathlib import Path
 from ..database import DatabaseManager, DataAccessLayer
 from ..config import ConfigManager
 from .advanced_endpoints import AdvancedEndpoints
+from .war_endpoints import WarEndpoints
+from .country_endpoints import CountryEndpoints
 # WebSocket handler removed
 
 logger = logging.getLogger(__name__)
@@ -30,28 +36,85 @@ class Victoria3API:
         self.config = config
         self.db_manager = db_manager
         self.data_access = DataAccessLayer(db_manager)
-        
+
+        # Load country name mapping from CSV
+        self.country_names = self._load_country_names()
+
         # Create Flask app
         self.app = Flask(__name__)
         self.app.config['JSON_SORT_KEYS'] = False
         
-        # Enable CORS for local development
-        CORS(self.app)
+        # Enable CORS restricted to localhost only
+        CORS(self.app, origins=r"http://(localhost|127\.0\.0\.1)(:\d+)?")
         
+        # Setup request logging middleware
+        self._setup_request_logging()
+
         # Setup error handlers
         self._setup_error_handlers()
-        
+
         # Register routes
         self._register_routes()
         
         # Initialize advanced endpoints
         self.advanced_endpoints = AdvancedEndpoints(self)
         
+        # Initialize war endpoints
+        self.war_endpoints = WarEndpoints(self)
+
+        # Initialize country endpoints
+        self.country_endpoints = CountryEndpoints(self)
+
         # WebSocket handler disabled
         self.websocket_handler = None
         
         logger.info("Victoria 3 API initialized")
-    
+
+    def _load_country_names(self) -> dict:
+        """Load country tag → readable name mapping from CSV."""
+        country_names = {}
+        csv_path = Path(__file__).parent.parent / 'web' / 'static' / 'country_names.csv'
+        try:
+            if csv_path.exists():
+                with open(csv_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        tag = row.get('Tag', '').strip().upper()
+                        name = row.get('Main Alias', '').strip()
+                        if tag and name:
+                            country_names[tag] = ' '.join(w.capitalize() for w in name.split())
+                logger.info(f"API loaded {len(country_names)} country name mappings")
+        except Exception as e:
+            logger.error(f"Error loading country names CSV in API: {e}")
+        return country_names
+
+    def get_country_display_name(self, tag: str) -> str:
+        """Return readable name for a country tag, falling back to the tag itself."""
+        if not tag:
+            return ''
+        return self.country_names.get(tag.upper(), tag.upper())
+
+    def _setup_request_logging(self):
+        """Setup before/after request hooks for logging and request ID tracking."""
+
+        @self.app.before_request
+        def before_request():
+            g.request_id = uuid.uuid4().hex[:8]
+            g.start_time = time.time()
+            logger.info(f"[{g.request_id}] → {request.method} {request.path}")
+
+        @self.app.after_request
+        def after_request(response):
+            duration_ms = (time.time() - getattr(g, 'start_time', time.time())) * 1000
+            request_id = getattr(g, 'request_id', '--------')
+            logger.info(
+                f"[{request_id}] ← {request.method} {request.path} "
+                f"{response.status_code} ({duration_ms:.0f}ms)"
+            )
+            # Expose the request ID in the response header so clients can correlate logs
+            response.headers['X-Request-ID'] = request_id
+            return response
+
     def _setup_error_handlers(self):
         """Setup custom error handlers."""
         
@@ -147,11 +210,12 @@ class Victoria3API:
                 
                 countries = []
                 for row in results:
+                    r = dict(row)
                     countries.append({
-                        'country_tag': row['country_tag'],
-                        'name': row['name'],
-                        'is_player_country': bool(row['is_player_country']),
-                        'latest_date': row.get('latest_date') or row.get('in_game_date')
+                        'country_tag': r['country_tag'],
+                        'name': r['name'],
+                        'is_player_country': bool(r['is_player_country']),
+                        'latest_date': r.get('latest_date') or r.get('in_game_date')
                     })
                 
                 return jsonify({
@@ -167,40 +231,78 @@ class Victoria3API:
         # Get metrics for a specific country
         @self.app.route('/api/countries/<country_tag>/metrics', methods=['GET'])
         def get_country_metrics(country_tag: str):
-            """Get metrics for a specific country."""
+            """Get metrics for a specific country.
+
+            Response format used by countries.js:
+              - No 'metric' param: { metrics: { gdp: { latest_value, change_percent, latest_date, ... }, ... } }
+              - With 'metric': also includes { history: [{ date, value }, ...] }
+            """
             try:
-                # Validate country tag
-                if not country_tag or len(country_tag) != 3:
+                if not country_tag:
                     abort(400)
-                
+
+                country_tag = country_tag.upper()
+
                 # Get query parameters
                 metric_name = request.args.get('metric')
                 playthrough_id = request.args.get('playthrough_id')
                 limit = request.args.get('limit', 50, type=int)
-                
+
                 if limit > 500:
-                    limit = 500  # Cap at 500
-                
-                if metric_name:
-                    # Get specific metric with optional playthrough filtering
-                    if playthrough_id:
-                        metrics = self.data_access.get_country_metrics_for_playthrough(country_tag, metric_name, playthrough_id, limit)
-                    else:
-                        metrics = self.data_access.get_country_metrics(country_tag, metric_name, limit)
+                    limit = 500
+
+                # Build metrics dict keyed by metric name (expected by countries.js)
+                if playthrough_id:
+                    latest_list = self.data_access.get_latest_metrics_for_country_playthrough(
+                        country_tag, playthrough_id
+                    )
                 else:
-                    # Get latest metrics for all types
-                    if playthrough_id:
-                        metrics = self.data_access.get_latest_metrics_for_country_playthrough(country_tag, playthrough_id)
-                    else:
-                        metrics = self.data_access.get_latest_metrics_for_country(country_tag)
-                
-                return jsonify({
+                    latest_list = self.data_access.get_latest_metrics_for_country(country_tag)
+
+                metrics_dict = {}
+                for row in latest_list:
+                    name = row.get('metric_name') or row.get('name', '')
+                    metrics_dict[name] = {
+                        'latest_value': row.get('amount'),
+                        'change_percent': row.get('change_percent'),
+                        'latest_date': row.get('recorded_at') or row.get('in_game_date'),
+                        'display_name': row.get('display_name', name),
+                        'unit': row.get('unit', ''),
+                    }
+
+                response = {
                     'country_tag': country_tag,
                     'playthrough_id': playthrough_id,
-                    'metrics': metrics,
-                    'count': len(metrics)
-                })
-                
+                    'metrics': metrics_dict,
+                }
+
+                # Build history array when a specific metric is requested
+                if metric_name:
+                    if playthrough_id:
+                        history_rows = self.data_access.get_country_metrics_for_playthrough(
+                            country_tag, metric_name, playthrough_id, limit
+                        )
+                    else:
+                        history_rows = self.data_access.get_country_metrics(
+                            country_tag, metric_name, limit
+                        )
+
+                    # Sort ascending by game date for charts
+                    history_rows = sorted(
+                        history_rows,
+                        key=lambda r: r.get('in_game_date') or r.get('recorded_at') or ''
+                    )
+
+                    response['history'] = [
+                        {
+                            'date': row.get('in_game_date') or row.get('recorded_at'),
+                            'value': row.get('amount'),
+                        }
+                        for row in history_rows
+                    ]
+
+                return jsonify(response)
+
             except Exception as e:
                 logger.error(f"Error getting country metrics: {e}")
                 return jsonify({'error': str(e)}), 500
@@ -296,12 +398,13 @@ class Victoria3API:
                 
                 metrics = []
                 for row in results:
+                    tag = row['country_tag']
                     metrics.append({
                         'amount': row['amount'],
                         'recorded_at': row['recorded_at'],
                         'in_game_date': row['in_game_date'],
-                        'country_tag': row['country_tag'],
-                        'country_name': row['country_name'],
+                        'country_tag': tag,
+                        'country_name': self.get_country_display_name(tag),
                         'metric_display_name': row['metric_display_name'],
                         'unit': row['unit']
                     })
@@ -333,7 +436,13 @@ class Victoria3API:
                     limit = 100  # Cap at 100
                 
                 rankings = self.data_access.get_country_rankings(metric_name, date, limit, save_id, playthrough_id)
-                
+
+                # Apply readable names
+                for entry in rankings:
+                    tag = entry.get('country_tag', '')
+                    display = self.get_country_display_name(tag)
+                    entry['name'] = display
+
                 return jsonify({
                     'metric_name': metric_name,
                     'rankings': rankings,
@@ -625,11 +734,160 @@ class Victoria3API:
                         validation_results['save_directory_valid'] = True
                 
                 return jsonify(validation_results)
-                
+
             except Exception as e:
                 logger.error(f"Error validating config: {e}")
                 return jsonify({'error': str(e)}), 500
-    
+
+        # ------------------------------------------------------------------ #
+        # Data export endpoints                                                #
+        # GET /api/export/metrics  — export country metrics as CSV or JSON    #
+        # GET /api/export/wars     — export war data as CSV or JSON           #
+        # ------------------------------------------------------------------ #
+
+        @self.app.route('/api/export/metrics', methods=['GET'])
+        def export_metrics():
+            """Export country metrics as CSV or JSON.
+
+            Query params:
+              - format: 'csv' (default) or 'json'
+              - playthrough_id: filter by playthrough
+              - metric: filter by metric name
+              - limit: max rows (default 1000, max 10000)
+            """
+            try:
+                fmt = request.args.get('format', 'csv').lower()
+                playthrough_id = request.args.get('playthrough_id')
+                metric_name = request.args.get('metric')
+                limit = min(request.args.get('limit', 1000, type=int), 10000)
+
+                conditions, params = [], []
+                if playthrough_id:
+                    conditions.append("s.playthrough_id = ?")
+                    params.append(playthrough_id)
+                if metric_name:
+                    conditions.append("mt.name = ?")
+                    params.append(metric_name)
+
+                where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+                params.append(limit)
+
+                rows = self.db_manager.execute_query(f"""
+                    SELECT
+                        s.playthrough_id,
+                        s.in_game_date,
+                        c.country_tag,
+                        mt.name        AS metric_name,
+                        mt.display_name,
+                        mt.unit,
+                        cm.amount
+                    FROM CountryMetrics cm
+                    JOIN Countries c  ON cm.country_id      = c.country_id
+                    JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                    JOIN Saves s       ON cm.save_id         = s.save_id
+                    {where}
+                    ORDER BY s.in_game_date ASC, c.country_tag, mt.name
+                    LIMIT ?
+                """, params)
+
+                data = [dict(r) for r in rows]
+
+                if fmt == 'json':
+                    return Response(
+                        __import__('json').dumps({'metrics': data, 'count': len(data)}, indent=2),
+                        mimetype='application/json',
+                        headers={'Content-Disposition': 'attachment; filename=metrics_export.json'}
+                    )
+
+                # Default: CSV
+                if not data:
+                    return Response("No data found", mimetype='text/plain'), 404
+
+                output = io.StringIO()
+                writer = csv.DictWriter(output, fieldnames=data[0].keys())
+                writer.writeheader()
+                writer.writerows(data)
+
+                return Response(
+                    output.getvalue(),
+                    mimetype='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename=metrics_export.csv'}
+                )
+
+            except Exception as e:
+                logger.error(f"Error exporting metrics: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/export/wars', methods=['GET'])
+        def export_wars():
+            """Export war data as CSV or JSON.
+
+            Query params:
+              - format: 'csv' (default) or 'json'
+              - playthrough_id: filter by playthrough
+              - limit: max rows (default 500, max 5000)
+            """
+            try:
+                fmt = request.args.get('format', 'csv').lower()
+                playthrough_id = request.args.get('playthrough_id')
+                limit = min(request.args.get('limit', 500, type=int), 5000)
+
+                conditions, params = [], []
+                if playthrough_id:
+                    conditions.append("w.playthrough_id = ?")
+                    params.append(playthrough_id)
+
+                where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+                params.append(limit)
+
+                rows = self.db_manager.execute_query(f"""
+                    SELECT
+                        w.playthrough_id,
+                        w.save_war_id,
+                        w.war_type,
+                        w.strategic_region,
+                        w.started_on,
+                        w.ended_on,
+                        w.status,
+                        COUNT(wp.participant_id)                          AS participant_count,
+                        COALESCE(SUM(wp.casualties), 0)                  AS total_casualties,
+                        COALESCE(SUM(wp.materiel_cost + wp.wage_cost), 0) AS total_war_cost
+                    FROM Wars w
+                    LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+                    {where}
+                    GROUP BY w.id
+                    ORDER BY w.started_on ASC
+                    LIMIT ?
+                """, params)
+
+                data = [dict(r) for r in rows]
+
+                if fmt == 'json':
+                    return Response(
+                        __import__('json').dumps({'wars': data, 'count': len(data)}, indent=2),
+                        mimetype='application/json',
+                        headers={'Content-Disposition': 'attachment; filename=wars_export.json'}
+                    )
+
+                # Default: CSV
+                if not data:
+                    return Response("No data found", mimetype='text/plain'), 404
+
+                output = io.StringIO()
+                writer = csv.DictWriter(output, fieldnames=data[0].keys())
+                writer.writeheader()
+                writer.writerows(data)
+
+                return Response(
+                    output.getvalue(),
+                    mimetype='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename=wars_export.csv'}
+                )
+
+            except Exception as e:
+                logger.error(f"Error exporting wars: {e}")
+                return jsonify({'error': str(e)}), 500
+
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
         from datetime import datetime

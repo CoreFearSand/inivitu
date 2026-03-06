@@ -157,8 +157,9 @@ class FileProcessingQueue:
         self.processor_callback = processor_callback
         self.validator = FileValidator(config)
         
-        # Queue and threading
-        self.task_queue: queue.Queue[ProcessingTask] = queue.Queue()
+        # Queue and threading — cap size to prevent unbounded memory growth
+        max_queue_size = config.get("max_queue_size", 100)
+        self.task_queue: queue.Queue[ProcessingTask] = queue.Queue(maxsize=max_queue_size)
         self.worker_threads: List[threading.Thread] = []
         self.running = False
         self.stats_lock = threading.Lock()

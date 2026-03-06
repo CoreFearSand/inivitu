@@ -25,9 +25,6 @@ function initializeDashboard() {
     // Load initial data
     loadDashboardData();
     
-    // Setup chart configurations
-    setupChartDefaults();
-    
     // Initialize tooltips
     initializeTooltips();
 }
@@ -216,16 +213,14 @@ async function loadTopCountries(metric = 'gdp') {
  * Create country ranking item HTML
  */
 function createCountryRankingItem(country, index, metric) {
-    const badgeClasses = ['bg-warning', 'bg-secondary', 'bg-info'];
-    const badgeClass = index < 3 ? badgeClasses[index] : 'bg-light text-dark';
     const metricIcon = getMetricIcon(metric);
-    
+
     return `
         <div class="d-flex justify-content-between align-items-center py-2">
             <div class="d-flex align-items-center">
-                <span class="badge ${badgeClass} me-2">${index + 1}</span>
+                ${rankBadge(index, 'me-2')}
                 <div>
-                    <div class="fw-bold">${country.name || country.country_tag}</div>
+                    <div class="fw-bold">${getCountryName(country.country_tag)}</div>
                     <small class="text-muted">${country.country_tag}</small>
                 </div>
             </div>
@@ -342,15 +337,6 @@ function updateTrendsChart(data) {
             }
         }
     });
-}
-
-/**
- * Setup Chart.js defaults
- */
-function setupChartDefaults() {
-    Chart.defaults.font.family = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
-    Chart.defaults.color = '#666';
-    Chart.defaults.borderColor = '#e0e0e0';
 }
 
 /**

@@ -12,6 +12,7 @@ from datetime import datetime
 
 from .save_parser import SaveFileParser
 from .metrics_extractor import MetricsExtractor, CountryMetrics
+from .war_extractor import WarExtractor, WarData
 from ..database import DatabaseManager, DataAccessLayer
 from ..config import ConfigManager
 
@@ -32,6 +33,7 @@ class DataProcessor:
         self.data_access = DataAccessLayer(db_manager)
         self.save_parser = SaveFileParser(config)
         self.metrics_extractor = MetricsExtractor()
+        self.war_extractor = WarExtractor()
         
         # Processing statistics
         self.processing_stats = {
@@ -40,6 +42,7 @@ class DataProcessor:
             'total_processing_time': 0.0,
             'countries_processed': 0,
             'metrics_stored': 0,
+            'wars_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }
@@ -90,12 +93,17 @@ class DataProcessor:
                 self._log_processing_failure(file_path.name, error_msg, start_time)
                 return False
             
+            # Step 2.5: Extract war data
+            logger.debug("Step 2.5: Extracting war data")
+            wars_list = self.war_extractor.extract_all_wars(parsed_data)
+            
             # Step 3: Store in database
             logger.debug("Step 3: Storing data in database")
             success = self._store_data_in_database(
                 parsed_data=parsed_data,
                 validation_result=validation_result,
                 country_metrics_list=country_metrics_list,
+                wars_list=wars_list,
                 file_path=file_path,
                 processing_start=processing_start
             )
@@ -122,7 +130,7 @@ class DataProcessor:
             return False
     
     def _store_data_in_database(self, parsed_data: Dict[str, Any], validation_result: Dict[str, Any],
-                               country_metrics_list: List[CountryMetrics], file_path: Path,
+                               country_metrics_list: List[CountryMetrics], wars_list: List[WarData], file_path: Path,
                                processing_start: datetime) -> bool:
         """Store all extracted data in the database.
         
@@ -130,6 +138,7 @@ class DataProcessor:
             parsed_data: Raw parsed save data
             validation_result: Validation results
             country_metrics_list: List of extracted country metrics
+            wars_list: List of extracted war data
             file_path: Original file path
             processing_start: When processing started
             
@@ -158,7 +167,27 @@ class DataProcessor:
             metrics_inserted = self._insert_country_metrics(country_metrics_list, save_id, parsed_data)
             logger.debug(f"Inserted {metrics_inserted} metrics")
             
-            # Step 3.4: Log successful processing
+            # Step 3.4: Insert war data
+            playthrough_id = parsed_data.get('playthrough_id', save_id)
+
+            # Parse game_date for marking absent wars as ended (same logic as save metadata)
+            game_date_raw = parsed_data.get('date') or parsed_data.get('game_date', '')
+            game_date: Optional[str] = None
+            if isinstance(game_date_raw, str) and '.' in game_date_raw:
+                try:
+                    _y, _m, _d = game_date_raw.split('.')
+                    game_date = f"{_y}-{_m.zfill(2)}-{_d.zfill(2)}"
+                except ValueError:
+                    pass
+            elif isinstance(game_date_raw, str) and '-' in game_date_raw:
+                game_date = game_date_raw
+
+            wars_inserted = self.data_access.insert_war_data(
+                wars_list, save_id, playthrough_id, game_date
+            )
+            logger.debug(f"Inserted {wars_inserted} wars")
+            
+            # Step 3.5: Log successful processing
             self.data_access.log_processing_result(
                 filename=file_path.name,
                 status='success',
@@ -169,6 +198,7 @@ class DataProcessor:
             # Update processing statistics
             self.processing_stats['countries_processed'] += len(country_metrics_list)
             self.processing_stats['metrics_stored'] += metrics_inserted
+            self.processing_stats['wars_stored'] += wars_inserted
             
             return True
             
@@ -310,6 +340,7 @@ class DataProcessor:
         # Add component statistics
         stats['parser_info'] = self.save_parser.get_parser_info()
         stats['extraction_stats'] = self.metrics_extractor.get_extraction_stats()
+        stats['war_extraction_stats'] = self.war_extractor.get_extraction_stats()
         
         return stats
     
@@ -321,6 +352,7 @@ class DataProcessor:
             'total_processing_time': 0.0,
             'countries_processed': 0,
             'metrics_stored': 0,
+            'wars_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }
@@ -419,19 +451,30 @@ class DataProcessor:
                 result['error'] = "No metrics extracted"
                 return result
             
+            # Step 2.5: Extract war data
+            wars_list = self.war_extractor.extract_all_wars(parsed_data)
+            result['war_result'] = {
+                'wars_found': len(wars_list),
+                'extraction_stats': self.war_extractor.get_extraction_stats(),
+                'sample_wars': [w.save_war_id for w in wars_list[:3]]
+            }
+            
             # Step 3: Test storage (without actually storing)
             result['storage_result'] = {
                 'would_store_countries': len(country_metrics_list),
                 'would_store_metrics': sum(
                     len([v for v in cm.metrics.values() if v is not None]) 
                     for cm in country_metrics_list
-                )
+                ),
+                'would_store_wars': len(wars_list),
+                'would_store_participants': sum(len(w.participants) for w in wars_list),
+                'would_store_battles': sum(len(w.battles) for w in wars_list)
             }
             
             result['success'] = True
             
         except Exception as e:
             result['error'] = str(e)
-            logger.error(f"Error in test processing: {e}")
+            logger.error(f"Error in test processing: {e}", exc_info=True)
         
         return result

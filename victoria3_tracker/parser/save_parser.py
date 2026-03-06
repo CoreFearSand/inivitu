@@ -297,7 +297,8 @@ class SaveFileParser:
             version_cmd = [str(self.rakaly_path), "--version"]
             result = subprocess.run(version_cmd, capture_output=True, text=True, timeout=5)
             rakaly_version = result.stdout.strip() if result.returncode == 0 else "unknown"
-        except:
+        except Exception as e:
+            logger.warning(f"Could not get rakaly version: {e}")
             rakaly_version = "unknown"
         
         return {

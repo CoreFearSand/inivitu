@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+
+{% block title %}War Statistics - Victoria 3 Game Tracker{% endblock %}
+
+{% block extra_head %}
+<style>
+    .war-card {
+        transition: transform 0.2s;
+    }
+    .war-card:hover {
+        transform: translateY(-2px);
+    }
+    .war-status-ongoing {
+        color: #dc3545;
+    }
+    .war-status-ended {
+        color: #28a745;
+    }
+    .war-status-white_peace {
+        color: #ffc107;
+    }
+    .battle-timeline {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .timeline-item {
+        border-left: 3px solid #007bff;
+        padding-left: 15px;
+        margin-bottom: 15px;
+        position: relative;
+    }
+    .timeline-item::before {
+        content: '';
+        position: absolute;
+        left: -6px;
+        top: 5px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background-color: #007bff;
+    }
+    .casualty-chart {
+        height: 300px;
+    }
+    .performance-metric {
+        text-align: center;
+        padding: 15px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+    th[data-sort] {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+    }
+    th[data-sort]:hover {
+        background-color: rgba(0, 123, 255, 0.08);
+    }
+    th[data-sort] .sort-icon {
+        font-size: 0.75rem;
+        margin-left: 4px;
+        opacity: 0.4;
+        pointer-events: none;   /* clicks pass through to the <th> */
+    }
+    th[data-sort].sort-asc .sort-icon::after  { content: '▲'; opacity: 1; }
+    th[data-sort].sort-desc .sort-icon::after { content: '▼'; opacity: 1; }
+    th[data-sort]:not(.sort-asc):not(.sort-desc) .sort-icon::after { content: '⇅'; }
+    tr.war-row:hover td { background-color: rgba(0, 123, 255, 0.06); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-sword"></i> War Statistics</h1>
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary" id="refresh-data">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="export-data">
+                    <i class="fas fa-download"></i> Export
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Filters</h5>
+                <div class="row">
+                    <div class="col-md-3">
+                        <label for="playthrough-select" class="form-label">Playthrough</label>
+                        <select class="form-select" id="playthrough-select">
+                            <option value="">All Playthroughs</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="country-select" class="form-label">Country</label>
+                        <select class="form-select" id="country-select">
+                            <option value="">All Countries</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="status-select" class="form-label">War Status</label>
+                        <select class="form-select" id="status-select">
+                            <option value="">All Statuses</option>
+                            <option value="ongoing">Ongoing</option>
+                            <option value="ended">Ended</option>
+                            <option value="white_peace">White Peace</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-primary w-100" id="apply-filters">
+                            <i class="fas fa-filter"></i> Apply Filters
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- War Statistics Overview -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-primary">Total Wars</h5>
+                <h2 class="display-4" id="total-wars">-</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-danger">Ongoing Wars</h5>
+                <h2 class="display-4" id="ongoing-wars">-</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-warning">Total Casualties</h5>
+                <h2 class="display-4" id="total-casualties">-</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-info">Total Battles</h5>
+                <h2 class="display-4" id="total-battles">-</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">War Casualties by Country</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="casualties-chart" class="casualty-chart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">War Costs by Country</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="war-costs-chart" class="casualty-chart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tabs for different views -->
+<div class="row">
+    <div class="col-12">
+        <ul class="nav nav-tabs" id="war-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="wars-tab" data-bs-toggle="tab" data-bs-target="#wars-pane" type="button" role="tab">
+                    <i class="fas fa-list"></i> Wars List
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="battles-tab" data-bs-toggle="tab" data-bs-target="#battles-pane" type="button" role="tab">
+                    <i class="fas fa-crosshairs"></i> Battles
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="timeline-tab" data-bs-toggle="tab" data-bs-target="#timeline-pane" type="button" role="tab">
+                    <i class="fas fa-clock"></i> Timeline
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="performance-tab" data-bs-toggle="tab" data-bs-target="#performance-pane" type="button" role="tab">
+                    <i class="fas fa-chart-bar"></i> Country Performance
+                </button>
+            </li>
+        </ul>
+        
+        <div class="tab-content" id="war-tab-content">
+            <!-- Wars List Tab -->
+            <div class="tab-pane fade show active" id="wars-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="wars-table">
+                                <thead>
+                                    <tr>
+                                        <th data-sort="war_type">War Name <span class="sort-icon"></span></th>
+                                        <th data-sort="status">Status <span class="sort-icon"></span></th>
+                                        <th data-sort="started_on">Started <span class="sort-icon"></span></th>
+                                        <th data-sort="ended_on">Ended <span class="sort-icon"></span></th>
+                                        <th data-sort="participant_count">Participants <span class="sort-icon"></span></th>
+                                        <th data-sort="total_casualties">Casualties <span class="sort-icon"></span></th>
+                                        <th data-sort="_total_cost">War Cost <span class="sort-icon"></span></th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wars-table-body">
+                                    <tr>
+                                        <td colspan="8" class="text-center">
+                                            <div class="spinner-border" role="status">
+                                                <span class="visually-hidden">Loading...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Battles Tab -->
+            <div class="tab-pane fade" id="battles-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="battles-table">
+                                <thead>
+                                    <tr>
+                                        <th data-sort="name">Battle Name <span class="sort-icon"></span></th>
+                                        <th data-sort="occurred_on">Date <span class="sort-icon"></span></th>
+                                        <th data-sort="location_province_id">Location <span class="sort-icon"></span></th>
+                                        <th data-sort="attacker_tag">Attacker <span class="sort-icon"></span></th>
+                                        <th data-sort="defender_tag">Defender <span class="sort-icon"></span></th>
+                                        <th data-sort="winner_tag">Winner <span class="sort-icon"></span></th>
+                                        <th data-sort="_total_casualties">Casualties <span class="sort-icon"></span></th>
+                                        <th data-sort="war_type">War <span class="sort-icon"></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="battles-table-body">
+                                    <tr>
+                                        <td colspan="8" class="text-center">
+                                            <div class="spinner-border" role="status">
+                                                <span class="visually-hidden">Loading...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Timeline Tab -->
+            <div class="tab-pane fade" id="timeline-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">War Timeline</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="battle-timeline" id="war-timeline">
+                            <div class="text-center">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading timeline...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Country Performance Tab -->
+            <div class="tab-pane fade" id="performance-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h5 class="card-title mb-0">Country War Performance</h5>
+                            </div>
+                            <div class="col-auto">
+                                <select class="form-select" id="performance-country-select">
+                                    <option value="">Select a country...</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body" id="performance-content">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-info-circle fa-2x mb-3"></i>
+                            <p>Select a country to view detailed war performance statistics.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- War Details Modal -->
+<div class="modal fade" id="war-details-modal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="war-details-title">War Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="war-details-body">
+                <div class="text-center">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/wars.js') }}"></script>
+{% endblock %}

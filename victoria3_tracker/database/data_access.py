@@ -14,6 +14,40 @@ from .manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# SQL fragment: four subquery columns added to any war list SELECT for
+# name-generation and Great Power detection.  The alias names are stable API
+# contract so front-end JS can rely on them without change.
+#
+# GP threshold: prestige >= 5 × global_avg  OR  >= 75 % of global_max.
+# ---------------------------------------------------------------------------
+_WAR_NAMING_COLS = """
+    (SELECT wp2.country_tag FROM WarParticipants wp2
+     WHERE wp2.war_id = w.id AND wp2.side = 'attacker'
+     ORDER BY wp2.prestige_at_war_start DESC LIMIT 1
+    ) AS main_attacker_tag,
+    (SELECT wp2.country_tag FROM WarParticipants wp2
+     WHERE wp2.war_id = w.id AND wp2.side = 'defender'
+     ORDER BY wp2.prestige_at_war_start DESC LIMIT 1
+    ) AS main_defender_tag,
+    (SELECT GROUP_CONCAT(wp2.country_tag) FROM WarParticipants wp2
+     WHERE wp2.war_id = w.id AND wp2.side = 'attacker'
+       AND (
+           (w.global_avg_prestige > 0 AND wp2.prestige_at_war_start >= w.global_avg_prestige * 5)
+           OR
+           (w.global_max_prestige > 0 AND wp2.prestige_at_war_start >= w.global_max_prestige * 0.75)
+       )
+    ) AS gp_attacker_tags,
+    (SELECT GROUP_CONCAT(wp2.country_tag) FROM WarParticipants wp2
+     WHERE wp2.war_id = w.id AND wp2.side = 'defender'
+       AND (
+           (w.global_avg_prestige > 0 AND wp2.prestige_at_war_start >= w.global_avg_prestige * 5)
+           OR
+           (w.global_max_prestige > 0 AND wp2.prestige_at_war_start >= w.global_max_prestige * 0.75)
+       )
+    ) AS gp_defender_tags"""
+
+
 class DataAccessLayer:
     """High-level data access interface with validation."""
     
@@ -644,6 +678,548 @@ class DataAccessLayer:
             logger.error(f"Failed to get processed saves: {e}")
             return []
     
+    def insert_war_data(self, wars_data: List[Any], save_id: str, playthrough_id: str,
+                        game_date: Optional[str] = None) -> int:
+        """Insert or update war data for a save.
+
+        Wars are keyed by (save_war_id, playthrough_id) so the same war is updated
+        across successive saves of the same playthrough rather than duplicated.
+
+        Wars that were previously ongoing but are absent from the current save are
+        automatically marked as 'ended' with ended_on = game_date.
+
+        Args:
+            wars_data: List of WarData objects from WarExtractor (typed as Any to
+                       avoid circular imports between database and parser packages)
+            save_id: Database save ID (Saves.save_id) for this save file
+            playthrough_id: Playthrough identifier to group wars across saves
+            game_date: Current in-game date (YYYY-MM-DD) used to set ended_on on
+                       wars that are no longer present in this save
+
+        Returns:
+            Number of wars upserted
+        """
+        try:
+            wars_upserted = 0
+            current_save_war_ids = {war.save_war_id for war in wars_data}
+
+            with self.db.transaction() as conn:
+                cursor = conn.cursor()
+
+                for war in wars_data:
+                    try:
+                        # Upsert the war: insert if new, update timestamps/status if seen before
+                        cursor.execute("""
+                            INSERT INTO Wars
+                                (save_war_id, playthrough_id, save_id, war_type, strategic_region,
+                                 diplomatic_play_id, objective_state_id, escalation,
+                                 initiator_maneuvers, target_maneuvers,
+                                 started_on, ended_on, status, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            ON CONFLICT(save_war_id, playthrough_id) DO UPDATE SET
+                                save_id              = excluded.save_id,
+                                war_type             = excluded.war_type,
+                                strategic_region     = excluded.strategic_region,
+                                diplomatic_play_id   = excluded.diplomatic_play_id,
+                                objective_state_id   = excluded.objective_state_id,
+                                escalation           = excluded.escalation,
+                                initiator_maneuvers  = excluded.initiator_maneuvers,
+                                target_maneuvers     = excluded.target_maneuvers,
+                                ended_on             = excluded.ended_on,
+                                status               = excluded.status,
+                                updated_at           = CURRENT_TIMESTAMP
+                        """, (
+                            war.save_war_id,
+                            playthrough_id,
+                            save_id,
+                            war.war_type,
+                            war.strategic_region,
+                            war.diplomatic_play_id,
+                            war.objective_state_id,
+                            war.escalation,
+                            war.initiator_maneuvers,
+                            war.target_maneuvers,
+                            war.started_on,
+                            war.ended_on,
+                            war.status,
+                        ))
+
+                        # Fetch the internal Wars.id for FK use
+                        cursor.execute(
+                            "SELECT id FROM Wars WHERE save_war_id = ? AND playthrough_id = ?",
+                            (war.save_war_id, playthrough_id)
+                        )
+                        row = cursor.fetchone()
+                        if not row:
+                            continue
+                        war_db_id = row[0]
+
+                        # Upsert participants (country_tag is the natural key, no country_id lookup)
+                        for p in war.participants:
+                            cursor.execute("""
+                                INSERT INTO WarParticipants
+                                    (war_id, country_tag, side, war_support, casualties,
+                                     materiel_cost, wage_cost, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                ON CONFLICT(war_id, country_tag) DO UPDATE SET
+                                    side          = excluded.side,
+                                    war_support   = excluded.war_support,
+                                    casualties    = excluded.casualties,
+                                    materiel_cost = excluded.materiel_cost,
+                                    wage_cost     = excluded.wage_cost,
+                                    updated_at    = CURRENT_TIMESTAMP
+                            """, (
+                                war_db_id,
+                                p.country_tag,
+                                p.side,
+                                p.war_support,
+                                p.casualties,
+                                p.materiel_cost,
+                                p.wage_cost,
+                            ))
+
+                        # Populate prestige_at_war_start for participants (set-once via condition)
+                        # Looks up each participant's prestige from CountryMetrics at the
+                        # closest recorded date <= war.started_on.  The WHERE prestige_at_war_start = 0
+                        # guard ensures we never overwrite the original war-start value on
+                        # subsequent save-file updates.
+                        cursor.execute("""
+                            UPDATE WarParticipants
+                            SET prestige_at_war_start = COALESCE((
+                                SELECT cm.amount
+                                FROM CountryMetrics cm
+                                JOIN Countries c    ON cm.country_id      = c.country_id
+                                JOIN MetricTypes mt ON cm.metric_type_id  = mt.metric_type_id
+                                WHERE c.country_tag = WarParticipants.country_tag
+                                  AND mt.name       = 'prestige'
+                                  AND cm.recorded_at <= ?
+                                ORDER BY cm.recorded_at DESC
+                                LIMIT 1
+                            ), 0)
+                            WHERE war_id = ? AND prestige_at_war_start = 0
+                        """, (war.started_on, war_db_id))
+
+                        # Populate global prestige stats for GP detection (set-once).
+                        # Pre-fetch the latest prestige snapshot date in Python so we
+                        # pass it as a single parameter — avoids repeating the inner
+                        # correlated subquery twice inside the UPDATE.
+                        snap_row = cursor.execute("""
+                            SELECT MAX(cm.recorded_at)
+                            FROM CountryMetrics cm
+                            JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                            WHERE mt.name = 'prestige' AND cm.recorded_at <= ?
+                        """, (war.started_on,)).fetchone()
+                        latest_snap = snap_row[0] if snap_row else None
+
+                        if latest_snap:
+                            cursor.execute("""
+                                UPDATE Wars
+                                SET
+                                    global_avg_prestige = COALESCE((
+                                        SELECT AVG(cm.amount)
+                                        FROM CountryMetrics cm
+                                        JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                                        WHERE mt.name = 'prestige' AND cm.recorded_at = ?
+                                    ), 0),
+                                    global_max_prestige = COALESCE((
+                                        SELECT MAX(cm.amount)
+                                        FROM CountryMetrics cm
+                                        JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                                        WHERE mt.name = 'prestige' AND cm.recorded_at = ?
+                                    ), 0)
+                                WHERE id = ? AND global_avg_prestige = 0
+                            """, (latest_snap, latest_snap, war_db_id))
+
+                        # Insert battles (immutable once recorded)
+                        for b in war.battles:
+                            cursor.execute("""
+                                INSERT OR IGNORE INTO Battles
+                                    (battle_id, war_id, name, occurred_on, location_province_id,
+                                     attacker_tag, defender_tag,
+                                     attacker_casualties, defender_casualties, winner_tag)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                b.battle_id,
+                                war_db_id,
+                                b.name,
+                                b.occurred_on,
+                                b.location_province_id,
+                                b.attacker_tag,
+                                b.defender_tag,
+                                b.attacker_casualties,
+                                b.defender_casualties,
+                                b.winner_tag,
+                            ))
+
+                        wars_upserted += 1
+
+                    except Exception as e:
+                        logger.warning(f"Error inserting war {war.save_war_id}: {e}", exc_info=True)
+                        continue
+
+                # Mark wars no longer present in this save as ended.
+                # Victoria 3 removes settled wars from war_manager.database, so absence
+                # from the current save means the war has concluded.
+                if game_date:
+                    if current_save_war_ids:
+                        placeholders = ','.join('?' * len(current_save_war_ids))
+                        cursor.execute(
+                            f"""UPDATE Wars
+                                SET status = 'ended', ended_on = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE playthrough_id = ?
+                                  AND status = 'ongoing'
+                                  AND save_war_id NOT IN ({placeholders})""",
+                            [game_date, playthrough_id] + list(current_save_war_ids)
+                        )
+                    else:
+                        # No wars found in save at all — mark every ongoing war ended
+                        cursor.execute(
+                            """UPDATE Wars
+                               SET status = 'ended', ended_on = ?, updated_at = CURRENT_TIMESTAMP
+                               WHERE playthrough_id = ? AND status = 'ongoing'""",
+                            (game_date, playthrough_id)
+                        )
+                    wars_ended = cursor.rowcount
+                    if wars_ended > 0:
+                        logger.info(f"Marked {wars_ended} previously-ongoing wars as ended "
+                                    f"(not present in save, game_date={game_date})")
+
+            if current_save_war_ids:
+                logger.info(f"Upserted {wars_upserted} wars for save {save_id}")
+            else:
+                logger.info(f"No wars in save {save_id}; checked for wars to mark ended")
+            return wars_upserted
+
+        except Exception as e:
+            logger.error(f"Failed to insert war data: {e}", exc_info=True)
+            raise
+    
+    def get_war_statistics(self, country_tag: Optional[str] = None, playthrough_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get war statistics with optional filtering.
+
+        Args:
+            country_tag: Filter by specific country tag
+            playthrough_id: Filter by specific playthrough
+            limit: Maximum number of wars to return
+
+        Returns:
+            List of war statistics dictionaries
+        """
+        try:
+            if country_tag and playthrough_id:
+                results = self.db.execute_query("""
+                    SELECT
+                        w.id                                             AS war_db_id,
+                        w.save_war_id,
+                        w.war_type,
+                        w.strategic_region,
+                        w.started_on,
+                        w.ended_on,
+                        w.status,
+                        w.escalation,
+                        wp.side,
+                        wp.war_support,
+                        wp.casualties,
+                        wp.materiel_cost,
+                        wp.wage_cost
+                    FROM Wars w
+                    JOIN WarParticipants wp ON w.id = wp.war_id
+                    WHERE wp.country_tag = ? AND w.playthrough_id = ?
+                    ORDER BY w.started_on DESC
+                    LIMIT ?
+                """, (country_tag, playthrough_id, limit))
+
+            elif country_tag:
+                results = self.db.execute_query("""
+                    SELECT
+                        w.id                                             AS war_db_id,
+                        w.save_war_id,
+                        w.war_type,
+                        w.strategic_region,
+                        w.started_on,
+                        w.ended_on,
+                        w.status,
+                        w.escalation,
+                        wp.side,
+                        wp.war_support,
+                        wp.casualties,
+                        wp.materiel_cost,
+                        wp.wage_cost
+                    FROM Wars w
+                    JOIN WarParticipants wp ON w.id = wp.war_id
+                    WHERE wp.country_tag = ?
+                    ORDER BY w.started_on DESC
+                    LIMIT ?
+                """, (country_tag, limit))
+
+            elif playthrough_id:
+                results = self.db.execute_query(f"""
+                    SELECT
+                        w.id                                             AS war_db_id,
+                        w.save_war_id,
+                        w.war_type,
+                        w.strategic_region,
+                        w.started_on,
+                        w.ended_on,
+                        w.status,
+                        w.escalation,
+                        w.global_avg_prestige,
+                        w.global_max_prestige,
+                        COUNT(wp.participant_id)                          AS participant_count,
+                        COUNT(CASE WHEN wp.side='attacker' THEN 1 END)   AS attacker_count,
+                        COUNT(CASE WHEN wp.side='defender' THEN 1 END)   AS defender_count,
+                        SUM(wp.casualties)                               AS total_casualties,
+                        SUM(wp.materiel_cost)                            AS total_materiel_cost,
+                        SUM(wp.wage_cost)                                AS total_wage_cost,
+                        {_WAR_NAMING_COLS}
+                    FROM Wars w
+                    LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+                    WHERE w.playthrough_id = ?
+                    GROUP BY w.id
+                    ORDER BY w.started_on DESC
+                    LIMIT ?
+                """, (playthrough_id, limit))
+
+            else:
+                results = self.db.execute_query(f"""
+                    SELECT
+                        w.id                                             AS war_db_id,
+                        w.save_war_id,
+                        w.playthrough_id,
+                        w.war_type,
+                        w.strategic_region,
+                        w.started_on,
+                        w.ended_on,
+                        w.status,
+                        w.escalation,
+                        w.global_avg_prestige,
+                        w.global_max_prestige,
+                        COUNT(wp.participant_id)                          AS participant_count,
+                        SUM(wp.casualties)                               AS total_casualties,
+                        SUM(wp.materiel_cost)                            AS total_materiel_cost,
+                        SUM(wp.wage_cost)                                AS total_wage_cost,
+                        {_WAR_NAMING_COLS}
+                    FROM Wars w
+                    LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+                    GROUP BY w.id
+                    ORDER BY w.started_on DESC
+                    LIMIT ?
+                """, (limit,))
+
+            return [dict(row) for row in results]
+
+        except Exception as e:
+            logger.error(f"Failed to get war statistics: {e}", exc_info=True)
+            return []
+    
+    def get_battle_statistics(self, war_db_id: Optional[int] = None, country_tag: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get battle statistics with optional filtering.
+
+        Args:
+            war_db_id: Filter by Wars.id (internal DB primary key)
+            country_tag: Filter by battles involving a specific country tag
+            limit: Maximum number of battles to return
+
+        Returns:
+            List of battle statistics dictionaries
+        """
+        try:
+            if war_db_id is not None:
+                results = self.db.execute_query("""
+                    SELECT
+                        b.battle_id,
+                        b.name,
+                        b.occurred_on,
+                        b.location_province_id,
+                        b.attacker_tag,
+                        b.defender_tag,
+                        b.winner_tag,
+                        b.attacker_casualties,
+                        b.defender_casualties,
+                        w.save_war_id,
+                        w.war_type
+                    FROM Battles b
+                    JOIN Wars w ON b.war_id = w.id
+                    WHERE b.war_id = ?
+                    ORDER BY b.occurred_on DESC
+                    LIMIT ?
+                """, (war_db_id, limit))
+
+            elif country_tag:
+                results = self.db.execute_query("""
+                    SELECT
+                        b.battle_id,
+                        b.name,
+                        b.occurred_on,
+                        b.location_province_id,
+                        b.attacker_tag,
+                        b.defender_tag,
+                        b.winner_tag,
+                        b.attacker_casualties,
+                        b.defender_casualties,
+                        w.save_war_id,
+                        w.war_type
+                    FROM Battles b
+                    JOIN Wars w ON b.war_id = w.id
+                    WHERE b.attacker_tag = ? OR b.defender_tag = ?
+                    ORDER BY b.occurred_on DESC
+                    LIMIT ?
+                """, (country_tag, country_tag, limit))
+
+            else:
+                results = self.db.execute_query("""
+                    SELECT
+                        b.battle_id,
+                        b.name,
+                        b.occurred_on,
+                        b.location_province_id,
+                        b.attacker_tag,
+                        b.defender_tag,
+                        b.winner_tag,
+                        b.attacker_casualties,
+                        b.defender_casualties,
+                        w.save_war_id,
+                        w.war_type
+                    FROM Battles b
+                    JOIN Wars w ON b.war_id = w.id
+                    ORDER BY b.occurred_on DESC
+                    LIMIT ?
+                """, (limit,))
+
+            return [dict(row) for row in results]
+
+        except Exception as e:
+            logger.error(f"Failed to get battle statistics: {e}", exc_info=True)
+            return []
+
+    def get_country_war_performance(self, country_tag: str, playthrough_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get war performance statistics for a specific country.
+
+        Args:
+            country_tag: Country tag (3-letter)
+            playthrough_id: Optional playthrough filter
+
+        Returns:
+            Dictionary with war performance statistics
+        """
+        try:
+            playthrough_condition = "AND w.playthrough_id = ?" if playthrough_id else ""
+            params_war = [country_tag] + ([playthrough_id] if playthrough_id else [])
+
+            war_stats = self.db.execute_query(f"""
+                SELECT
+                    COUNT(*)                                              AS total_wars,
+                    SUM(CASE WHEN wp.side='attacker' THEN 1 ELSE 0 END)  AS wars_as_attacker,
+                    SUM(CASE WHEN wp.side='defender' THEN 1 ELSE 0 END)  AS wars_as_defender,
+                    SUM(wp.casualties)                                   AS total_casualties,
+                    SUM(wp.materiel_cost)                                AS total_materiel_cost,
+                    SUM(wp.wage_cost)                                    AS total_wage_cost,
+                    AVG(wp.war_support)                                  AS avg_war_support
+                FROM WarParticipants wp
+                JOIN Wars w ON wp.war_id = w.id
+                WHERE wp.country_tag = ? {playthrough_condition}
+            """, params_war)
+
+            params_battle = [country_tag, country_tag, country_tag, country_tag, country_tag]
+            if playthrough_id:
+                params_battle.append(playthrough_id)
+
+            battle_stats = self.db.execute_query(f"""
+                SELECT
+                    COUNT(*)                                                                     AS total_battles,
+                    SUM(CASE WHEN b.attacker_tag=? THEN b.attacker_casualties
+                             ELSE b.defender_casualties END)                                     AS casualties_taken,
+                    SUM(CASE WHEN b.attacker_tag=? THEN b.defender_casualties
+                             ELSE b.attacker_casualties END)                                     AS casualties_inflicted,
+                    SUM(CASE WHEN b.winner_tag=? THEN 1 ELSE 0 END)                             AS battles_won
+                FROM Battles b
+                JOIN Wars w ON b.war_id = w.id
+                WHERE (b.attacker_tag=? OR b.defender_tag=?) {playthrough_condition}
+            """, params_battle)
+
+            result: Dict[str, Any] = {
+                'country_tag': country_tag,
+                'total_wars': 0,
+                'wars_as_attacker': 0,
+                'wars_as_defender': 0,
+                'total_casualties': 0.0,
+                'total_materiel_cost': 0.0,
+                'total_wage_cost': 0.0,
+                'avg_war_support': 0.0,
+                'total_battles': 0,
+                'casualties_taken': 0,
+                'casualties_inflicted': 0,
+                'battles_won': 0,
+                'battle_win_rate': 0.0,
+            }
+
+            if war_stats:
+                result.update({k: v or 0 for k, v in dict(war_stats[0]).items()})
+
+            if battle_stats:
+                result.update({k: v or 0 for k, v in dict(battle_stats[0]).items()})
+                if result['total_battles'] > 0:
+                    result['battle_win_rate'] = result['battles_won'] / result['total_battles'] * 100
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get country war performance: {e}", exc_info=True)
+            return {}
+    
+    def get_war_participant_countries(self, playthrough_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all unique countries that have participated in at least one war.
+
+        Sourced from WarParticipants directly, so this works even if the country
+        has no metrics data in the Countries/CountryMetrics tables.
+        Includes the best available display name from the Countries table.
+
+        Args:
+            playthrough_id: Optional filter by playthrough
+
+        Returns:
+            List of dicts with country_tag and country_name
+        """
+        try:
+            if playthrough_id:
+                results = self.db.execute_query("""
+                    SELECT
+                        wp.country_tag,
+                        COALESCE(
+                            (SELECT c.name FROM Countries c
+                             WHERE c.country_tag = wp.country_tag
+                               AND c.name IS NOT NULL
+                               AND c.name != c.country_tag
+                             LIMIT 1),
+                            wp.country_tag
+                        ) AS country_name
+                    FROM WarParticipants wp
+                    JOIN Wars w ON wp.war_id = w.id
+                    WHERE w.playthrough_id = ?
+                    GROUP BY wp.country_tag
+                    ORDER BY wp.country_tag
+                """, (playthrough_id,))
+            else:
+                results = self.db.execute_query("""
+                    SELECT
+                        wp.country_tag,
+                        COALESCE(
+                            (SELECT c.name FROM Countries c
+                             WHERE c.country_tag = wp.country_tag
+                               AND c.name IS NOT NULL
+                               AND c.name != c.country_tag
+                             LIMIT 1),
+                            wp.country_tag
+                        ) AS country_name
+                    FROM WarParticipants wp
+                    GROUP BY wp.country_tag
+                    ORDER BY wp.country_tag
+                """)
+            return [dict(row) for row in results]
+        except Exception as e:
+            logger.error(f"Failed to get war participant countries: {e}", exc_info=True)
+            return []
+
     def log_processing_result(self, filename: str, status: str, save_id: Optional[str] = None, 
                             error_message: Optional[str] = None, processing_time_ms: Optional[int] = None) -> None:
         """Log file processing result.
