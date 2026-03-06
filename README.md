@@ -26,34 +26,40 @@ python victoria3_tracker.py --install
 2. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
+
+   # For development / running tests:
+   pip install -r requirements-dev.txt
    ```
 
 3. **Run Application**:
    ```bash
    # Full application with automatic setup
    python victoria3_tracker.py
-   
-   # Or use the simple launchers
-   python start_web.py              # Full application
-   python run_tracker.py           # Full application with CLI options
-   
+
    # Windows users can also use:
-   start_tracker.bat               # Batch file launcher
+   start_tracker.bat               # Batch file launcher (double-click or run from cmd)
    .\start_tracker.ps1             # PowerShell launcher
    ```
 
 4. **Access Dashboard**:
    - Open your browser to `http://localhost:8080`
 
-### Command Line Options
-```bash
-python victoria3_tracker.py --help           # Show all options
-python victoria3_tracker.py --web-only       # Web interface only
-python victoria3_tracker.py --status         # Check application status
-python victoria3_tracker.py --install        # Run installation wizard
-```
+## Command Line Options
 
-For detailed launcher information, see [LAUNCHER_README.md](LAUNCHER_README.md).
+```bash
+python victoria3_tracker.py                        # Start full application
+python victoria3_tracker.py --web-only             # Web interface only (no monitoring)
+python victoria3_tracker.py --install              # Run installation wizard
+python victoria3_tracker.py --status               # Check application status
+python victoria3_tracker.py --help                 # Show all options
+
+# Advanced
+python victoria3_tracker.py --config custom.json   # Use custom config file
+python victoria3_tracker.py --port 9000            # Use custom web port
+python victoria3_tracker.py --log-level DEBUG      # Verbose logging
+python victoria3_tracker.py --process-file save.v3 # Process single save file
+python victoria3_tracker.py --quiet                # Suppress banner output
+```
 
 ## Configuration
 
@@ -61,8 +67,8 @@ The `config.json` file contains all application settings:
 
 ```json
 {
-  "save_directory": "C:\\Users\\**\\Documents\\Paradox Interactive\\Victoria 3\\save games",
-  "database_path": "./victoria3_data.db",
+  "save_directory": "C:\\Users\\<username>\\Documents\\Paradox Interactive\\Victoria 3\\save games",
+  "database_path": "./victoria3_tracker/database/victoria3_data.db",
   "web_port": 8080,
   "polling_interval": 5,
   "rakaly_path": "./rakaly.exe",
@@ -82,6 +88,39 @@ The `config.json` file contains all application settings:
 - **Military**: Military workforce size
 - **Wars**: Wars and war related data
 
+## Troubleshooting
+
+### "Python is not installed or not in PATH"
+- Install Python from [python.org](https://www.python.org/downloads/)
+- Check "Add Python to PATH" during installation
+- Restart your terminal after installing
+
+### "rakaly.exe not found"
+- Download `rakaly.exe` from [GitHub releases](https://github.com/rakaly/cli/releases/)
+- Place it in the same directory as `victoria3_tracker.py`
+
+### "Missing required dependencies"
+```bash
+pip install -r requirements.txt
+```
+
+### "Save directory does not exist"
+- Make sure Victoria 3 has been run at least once so the save folder is created
+- Update `save_directory` in `config.json` to the correct path
+
+### Getting diagnostic info
+```bash
+python victoria3_tracker.py --status              # Config & dependency summary
+python victoria3_tracker.py --log-level DEBUG     # Verbose logs in logs/
+```
+
+## Performance Notes
+
+- **Large save files**: Files up to the configured `max_file_size_mb` are supported
+- **Database growth**: The SQLite database grows over time as more saves are processed
+- **Memory usage**: Typically 50–200 MB depending on data volume
+- **CPU usage**: Spikes briefly when a new save is processed; otherwise minimal
+
 ## Project Structure
 
 ```
@@ -90,11 +129,11 @@ inivitu/
 ├── victoria3_tracker.py          # CLI launcher with dependency checking
 ├── install.py                    # Setup/installation wizard
 ├── config.json                   # App configuration (paths, ports, settings)
-├── requirements.txt              # Python dependencies
+├── requirements.txt              # Runtime Python dependencies
+├── requirements-dev.txt          # Dev/test dependencies (pytest, black, flake8)
 ├── start_tracker.bat             # Windows batch launcher
 ├── start_tracker.ps1             # PowerShell launcher
-├── victoria3_data.db             # Live SQLite database
-├── victoria3_data.db-shm/.wal    # SQLite WAL mode files
+├── rakaly.exe                    # Save-file parser (download separately)
 │
 ├── victoria3_tracker/            # Core Python package
 │   ├── main.py                   # App orchestrator (starts all components)
@@ -102,6 +141,7 @@ inivitu/
 │   ├── logging_config.py         # Logging setup
 │   │
 │   ├── database/
+│   │   ├── victoria3_data.db     # Live SQLite database (git-ignored)
 │   │   ├── schema.py             # Table definitions (Saves, Countries, Wars, Metrics…)
 │   │   ├── manager.py            # Connection lifecycle, execute_query, transactions
 │   │   └── data_access.py        # CRUD / query layer (DataAccessLayer)
@@ -151,17 +191,18 @@ inivitu/
 │   ├── test_country_preservation.py
 │   └── test_country_bugs_exploration.py
 │
-└── backup/
-    └── victoria3_data.db (+ shm/wal) # Database backups
+└── backup/                       # Database backups (git-ignored)
 ```
 
-## Development
+## Process
 
-This project follows a modular architecture with clear separation of concerns:
-
-1. **Configuration Management**: Handles all application settings
-2. **File Monitor**: Watches for new save files
-3. **Data Parser**: Converts saves to structured data
-4. **Database Layer**: Stores and queries game metrics
-5. **API Layer**: Provides REST endpoints
-6. **Web Interface**: Interactive dashboard
+```
+.v3 save file detected
+    → file_monitor.py sees it
+    → file_processor.py validates & queues it
+    → save_parser.py runs rakaly.exe → JSON
+    → metrics_extractor.py + war_extractor.py pull data
+    → data_processor.py writes to SQLite via manager.py
+    → websocket_handler.py broadcasts update to browser
+    → api/*.py serves data to the web dashboard
+```

@@ -80,23 +80,23 @@ def check_save_directory():
     """Check if Victoria 3 save directory exists."""
     print("\nChecking Victoria 3 save directory...")
     
-    default_path = Path(r"C:\Users") / os.getenv('USERNAME', 'user') / "OneDrive" / "Dokumenter" / "Paradox Interactive" / "Victoria 3" / "save games"
-    
-    if default_path.exists():
-        print(f"✓ Victoria 3 save directory found: {default_path}")
-        return str(default_path)
-    
-    # Try alternative paths
+    username = os.getenv('USERNAME', 'user')
+    # Try common locations in priority order (OneDrive variants first, then local Documents)
     alternative_paths = [
         Path.home() / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games",
-        Path(r"C:\Users") / os.getenv('USERNAME', 'user') / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games"
+        Path(r"C:\Users") / username / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games",
+        Path(r"C:\Users") / username / "OneDrive" / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games",
+        # Localised OneDrive folder names (e.g. Norwegian "Dokumenter")
+        Path(r"C:\Users") / username / "OneDrive" / "Dokumenter" / "Paradox Interactive" / "Victoria 3" / "save games",
     ]
-    
-    for alt_path in alternative_paths:
-        if alt_path.exists():
-            print(f"✓ Victoria 3 save directory found: {alt_path}")
-            return str(alt_path)
-    
+
+    # Use the first path that actually exists
+    for candidate in alternative_paths:
+        if candidate.exists():
+            print(f"✓ Victoria 3 save directory found: {candidate}")
+            return str(candidate)
+
+
     print("✗ Victoria 3 save directory not found")
     print("  Please ensure Victoria 3 is installed and has been run at least once")
     print("  Or manually specify the save directory in config.json")
@@ -112,13 +112,16 @@ def create_config(save_directory=None):
         print("✓ Configuration file already exists")
         return True
     
-    # Use provided save directory or default
+    # Use provided save directory or a generic placeholder
     if not save_directory:
-        save_directory = r"C:\Users\kaare\OneDrive\Dokumenter\Paradox Interactive\Victoria 3\save games"
-    
+        username = os.getenv('USERNAME', 'user')
+        save_directory = str(
+            Path(r"C:\Users") / username / "Documents" / "Paradox Interactive" / "Victoria 3" / "save games"
+        )
+
     config = {
         "save_directory": save_directory,
-        "database_path": "./victoria3_data.db",
+        "database_path": "./victoria3_tracker/database/victoria3_data.db",
         "web_port": 8080,
         "polling_interval": 5,
         "rakaly_path": "./rakaly.exe",
@@ -146,7 +149,7 @@ def create_directories():
     """Create necessary directories."""
     print("\nCreating directories...")
     
-    directories = ["logs", "backups"]
+    directories = ["logs", "backup", "victoria3_tracker/database"]
     
     for directory in directories:
         try:

@@ -26,7 +26,7 @@ def print_banner():
 def check_python_version():
     """Check if Python version meets requirements."""
     if sys.version_info < (3, 8):
-        print(f"❌ Error: Python {sys.version_info.major}.{sys.version_info.minor} is not supported")
+        print(f"   Error: Python {sys.version_info.major}.{sys.version_info.minor} is not supported")
         print("   Victoria 3 Game Tracker requires Python 3.8 or higher")
         print("   Please upgrade Python and try again")
         return False
@@ -51,7 +51,7 @@ def check_dependencies():
             missing_packages.append((package, description))
     
     if missing_packages:
-        print("❌ Missing required dependencies:")
+        print("Missing required dependencies:")
         for package, description in missing_packages:
             print(f"   - {package}: {description}")
         print()
@@ -120,10 +120,10 @@ def run_installation():
                               capture_output=False, text=True)
         return result.returncode == 0
     except FileNotFoundError:
-        print("❌ install.py not found")
+        print("   install.py not found")
         return False
     except Exception as e:
-        print(f"❌ Installation failed: {e}")
+        print(f"   Installation failed: {e}")
         return False
 
 def validate_environment():
@@ -138,36 +138,36 @@ def validate_environment():
     print("Checking Python dependencies...")
     if not check_dependencies():
         print()
-        print("💡 Tip: Run 'python victoria3_tracker.py --install' to set up dependencies")
+        print("   Tip: Run 'python victoria3_tracker.py --install' to set up dependencies")
         return False
     
     # Check rakaly
     print("Checking rakaly.exe...")
     rakaly_available, rakaly_path = check_rakaly()
     if not rakaly_available:
-        print("❌ rakaly.exe not found")
+        print("   rakaly.exe not found")
         print("   rakaly.exe is required to parse Victoria 3 save files")
         print("   Download from: https://github.com/rakaly/rakaly/releases")
         print("   Place rakaly.exe in the project directory")
         return False
     else:
-        print(f"✅ rakaly.exe found: {rakaly_path}")
+        print(f"   rakaly.exe found: {rakaly_path}")
     
     # Check configuration
     print("Checking configuration...")
     config_valid, config_or_error = check_config()
     if not config_valid:
-        print(f"❌ Configuration error: {config_or_error}")
+        print(f"   Configuration error: {config_or_error}")
         print()
-        print("💡 Tip: Run 'python victoria3_tracker.py --install' to create configuration")
+        print("   Tip: Run 'python victoria3_tracker.py --install' to create configuration")
         return False
     else:
         config = config_or_error
-        print(f"✅ Configuration valid")
+        print(f"   Configuration valid")
         print(f"   Save directory: {config['save_directory']}")
         print(f"   Web port: {config['web_port']}")
     
-    print("✅ Environment validation passed")
+    print("   Environment validation passed")
     return True
 
 def start_application(args):
@@ -214,15 +214,15 @@ def start_application(args):
         tracker.start()
         
     except ImportError as e:
-        print(f"❌ Import error: {e}")
+        print(f"   Import error: {e}")
         print("   This usually means dependencies are not installed correctly")
         print("   Run 'python victoria3_tracker.py --install' to fix this")
         return False
     except KeyboardInterrupt:
-        print("\n👋 Shutdown requested by user")
+        print("\n   Shutdown requested by user")
         return True
     except Exception as e:
-        print(f"❌ Application error: {e}")
+        print(f"   Application error: {e}")
         return False
 
 def process_single_file(file_path):
@@ -234,11 +234,11 @@ def process_single_file(file_path):
         
         file_path = Path(file_path)
         if not file_path.exists():
-            print(f"❌ File not found: {file_path}")
+            print(f"   File not found: {file_path}")
             return False
         
         if not file_path.suffix == '.v3':
-            print(f"❌ Not a Victoria 3 save file: {file_path}")
+            print(f"   Not a Victoria 3 save file: {file_path}")
             print("   Expected .v3 extension")
             return False
         
@@ -247,14 +247,14 @@ def process_single_file(file_path):
         success = tracker._process_single_file(file_path)
         
         if success:
-            print("✅ File processed successfully")
+            print("   File processed successfully")
         else:
-            print("❌ File processing failed")
+            print("   File processing failed")
         
         return success
         
     except Exception as e:
-        print(f"❌ Error processing file: {e}")
+        print(f"   Error processing file: {e}")
         return False
 
 def show_status():
@@ -270,7 +270,7 @@ def show_status():
         
         if config_valid:
             config = config_or_error
-            print("✅ Configuration is valid")
+            print("   Configuration is valid")
             print(f"   Save directory: {config['save_directory']}")
             print(f"   Database: {config['database_path']}")
             print(f"   Web port: {config['web_port']}")
@@ -278,30 +278,34 @@ def show_status():
             # Check if database exists
             db_path = Path(config['database_path'])
             if db_path.exists():
-                print(f"✅ Database exists: {db_path} ({db_path.stat().st_size} bytes)")
+                print(f"   Database exists: {db_path} ({db_path.stat().st_size} bytes)")
             else:
-                print(f"ℹ️  Database not created yet: {db_path}")
+                print(f"   Database not created yet: {db_path}")
         else:
-            print(f"❌ Configuration error: {config_or_error}")
+            print(f"   Configuration error: {config_or_error}")
         
         # Check dependencies
         if check_dependencies():
-            print("✅ All dependencies are installed")
+            print("   All dependencies are installed")
         else:
-            print("❌ Some dependencies are missing")
+            print("   Some dependencies are missing")
         
         # Check rakaly
         rakaly_available, rakaly_path = check_rakaly()
         if rakaly_available:
-            print(f"✅ rakaly.exe available: {rakaly_path}")
+            print(f"   rakaly.exe available: {rakaly_path}")
         else:
-            print("❌ rakaly.exe not found")
+            print("   rakaly.exe not found")
         
     except Exception as e:
-        print(f"❌ Error checking status: {e}")
+        print(f"   Error checking status: {e}")
 
 def main():
     """Main entry point with command-line interface."""
+    # Ensure all relative paths (config.json, rakaly.exe, database, logs) resolve
+    # correctly regardless of what directory the user invokes the script from.
+    os.chdir(Path(__file__).parent)
+
     parser = argparse.ArgumentParser(
         description="Victoria 3 Game Tracker - Automatic save file monitoring and game data visualization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -395,7 +399,7 @@ For more information, visit: https://github.com/your-repo/victoria3-tracker
         if not args.no_validate:
             if not validate_environment():
                 print()
-                print("💡 Environment validation failed. Try:")
+                print("   Environment validation failed. Try:")
                 print("   python victoria3_tracker.py --install    # Run setup")
                 print("   python victoria3_tracker.py --status     # Check status")
                 print("   python victoria3_tracker.py --no-validate # Skip validation")
@@ -408,10 +412,10 @@ For more information, visit: https://github.com/your-repo/victoria3-tracker
         
     except KeyboardInterrupt:
         if not args.quiet:
-            print("\n👋 Goodbye!")
+            print("\n   Goodbye!")
         sys.exit(0)
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f"   Unexpected error: {e}")
         if args.log_level == "DEBUG":
             import traceback
             traceback.print_exc()

@@ -2,6 +2,9 @@
 REM Victoria 3 Game Tracker - Windows Launcher
 REM This batch file provides an easy way to start the tracker on Windows
 
+REM Always run from the directory this .bat file lives in
+cd /d "%~dp0"
+
 title Victoria 3 Game Tracker
 
 echo.

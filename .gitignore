@@ -1,59 +1,60 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# ──────────────────────────────────────────────
+# Victoria 3 Game Tracker — .gitignore
+# ──────────────────────────────────────────────
 
-# Virtual environments
-venv/
-env/
-ENV/
-.venv/
-.env/
+# ── Database files (live data, not tracked) ──
+victoria3_tracker/database/*.db
+victoria3_tracker/database/*.db-shm
+victoria3_tracker/database/*.db-wal
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# ── Database backups ──
+backup/
 
-# Application specific
-config.json
-victoria3_data.db
+# ── Logs ──
 logs/
 *.log
 
-# Save files and test data
-*.v3
-test_saves/
+# ── Configuration (may contain personal paths) ──
+# Uncomment the line below if you don't want to track config.json
+# config.json
 
-# OS
-.DS_Store
-Thumbs.db
+# ── Python cache ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
 
-# Coverage reports
+# ── Virtual environments ──
+venv/
+.venv/
+env/
+.env/
+
+# ── Testing / coverage ──
+.pytest_cache/
+.hypothesis/
 htmlcov/
 .coverage
-.coverage.*
 coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+
+# ── Build / dist ──
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ── OS junk ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.kiro/
+
+# ── rakaly binary (users download their own) ──
+rakaly.exe

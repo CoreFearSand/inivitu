@@ -9,6 +9,9 @@ param(
     [switch]$Help
 )
 
+# Always run from the directory this script lives in
+Set-Location $PSScriptRoot
+
 # Set console title
 $Host.UI.RawUI.WindowTitle = "Victoria 3 Game Tracker"
 

@@ -16,8 +16,8 @@ class ConfigManager:
     """Manages application configuration with validation and defaults."""
     
     DEFAULT_CONFIG = {
-        "save_directory": r"C:\Users\*\Documents\Paradox Interactive\Victoria 3\save games",
-        "database_path": "./victoria3_data.db",
+        "save_directory": r"C:\Users\kaare\OneDrive\Dokumenter\Paradox Interactive\Victoria 3\save games",
+        "database_path": "./victoria3_tracker/database/victoria3_data.db",
         "web_port": 8080,
         "polling_interval": 5,
         "rakaly_path": "./rakaly.exe",
