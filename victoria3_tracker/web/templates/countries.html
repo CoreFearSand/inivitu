@@ -49,7 +49,13 @@
                             <div class="card h-100 {% if country.is_player_country %}border-primary{% endif %}">
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between align-items-start mb-2">
-                                        <h6 class="card-title mb-0">{{ country.name or country.country_tag }}</h6>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <img src="{{ country.flag_url }}" alt="{{ country.country_tag }}"
+                                                 data-alt="{{ country.flag_url_alt }}"
+                                                 style="width:36px;height:24px;object-fit:cover;border-radius:2px;border:1px solid #dee2e6;flex-shrink:0;"
+                                                 onerror="var a=this.dataset.alt;if(a){this.src=a;this.dataset.alt=''}else{this.style.display='none'}">
+                                            <h6 class="card-title mb-0">{{ country.name or country.country_tag }}</h6>
+                                        </div>
                                         {% if country.is_player_country %}
                                         <span class="badge bg-primary">Player</span>
                                         {% endif %}
@@ -94,7 +100,7 @@ function setupCountriesPage() {
     const searchInput = document.getElementById('country-search');
     if (searchInput) {
         searchInput.addEventListener('input', debounce(function() {
-            filterCountries(this.value);
+            filterCountries(searchInput.value);
         }, 300));
     }
     
@@ -109,18 +115,35 @@ function setupCountriesPage() {
 
 function filterCountries(searchTerm) {
     const cards = document.querySelectorAll('.country-card');
-    const term = searchTerm.toLowerCase();
-    
+    const term = (searchTerm || '').toLowerCase();
+    let visible = 0;
+
     cards.forEach(card => {
         const name = card.getAttribute('data-name') || '';
         const tag = card.getAttribute('data-tag') || '';
-        
+
         if (name.includes(term) || tag.includes(term)) {
-            card.style.display = 'block';
+            card.style.display = '';
+            visible++;
         } else {
             card.style.display = 'none';
         }
     });
+
+    // Show/hide "no results" message
+    let noResults = document.getElementById('countries-no-results');
+    if (visible === 0 && term) {
+        if (!noResults) {
+            noResults = document.createElement('div');
+            noResults.id = 'countries-no-results';
+            noResults.className = 'text-center text-muted py-4 col-12';
+            noResults.innerHTML = '<i class="fas fa-search fa-2x mb-2"></i><p>No countries match your search.</p>';
+            document.getElementById('countries-grid').appendChild(noResults);
+        }
+        noResults.style.display = '';
+    } else if (noResults) {
+        noResults.style.display = 'none';
+    }
 }
 
 function sortCountries(sortBy) {

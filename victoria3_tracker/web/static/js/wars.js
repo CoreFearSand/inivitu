@@ -5,6 +5,9 @@
  * battles table, timeline, country performance, and war detail modal.
  */
 
+// ─── Flag URL cache (tag → {url, alt}) populated from /api/countries ─────────
+const _warFlagUrls = {};
+
 // ─── Page state ──────────────────────────────────────────────────────────────
 const warsState = {
     charts: {},
@@ -64,11 +67,21 @@ async function loadPlaythroughs() {
 async function loadCountriesForFilter() {
     try {
         // Main filter: uses Countries table (countries with metric data)
-        const data = await apiRequest('/api/countries?limit=200');
+        const data = await apiRequest('/api/countries?limit=1000');
         const countrySelect = document.getElementById('country-select');
 
         const countries = data.countries || [];
         countries.sort((a, b) => (a.name || a.country_tag).localeCompare(b.name || b.country_tag));
+
+        // Populate flag URL cache for use in war/battle rows
+        countries.forEach(c => {
+            if (c.flag_url) {
+                _warFlagUrls[c.country_tag.toUpperCase()] = {
+                    url: c.flag_url,
+                    alt: c.flag_url_alt || ''
+                };
+            }
+        });
 
         countries.forEach(c => {
             const label = `${c.name || c.country_tag} (${c.country_tag})`;
@@ -384,13 +397,65 @@ function renderWarsTable() {
     // onclick handlers are inlined in createWarRow — no extra binding needed
 }
 
+/**
+ * Return a small flag <img> for a country tag, with two-step URL fallback.
+ */
+function warFlagImg(tag) {
+    if (!tag) return '';
+    const entry = _warFlagUrls[tag.toUpperCase()];
+    const src    = entry?.url || '';
+    const altSrc = entry?.alt || '';
+    if (!src) return '';
+    return `<img src="${src}" data-alt="${altSrc}" title="${getCountryName(tag)}"
+                 style="width:20px;height:14px;object-fit:cover;border-radius:2px;border:1px solid #dee2e6;flex-shrink:0;vertical-align:middle;"
+                 onerror="var a=this.dataset.alt;if(a){this.src=a;this.dataset.alt=''}else{this.style.display='none'}">`;
+}
+
+/**
+ * Build the participants cell for a war row — attacker flags vs defender flags.
+ * Falls back to the plain participant count if no tags are available.
+ */
+function participantFlags(w) {
+    const attTags = [];
+    if (w.main_attacker_tag) attTags.push(w.main_attacker_tag);
+    if (w.gp_attacker_tags) {
+        w.gp_attacker_tags.split(',').forEach(t => {
+            const tag = t.trim();
+            if (tag && tag !== w.main_attacker_tag) attTags.push(tag);
+        });
+    }
+
+    const defTags = [];
+    if (w.main_defender_tag) defTags.push(w.main_defender_tag);
+    if (w.gp_defender_tags) {
+        w.gp_defender_tags.split(',').forEach(t => {
+            const tag = t.trim();
+            if (tag && tag !== w.main_defender_tag) defTags.push(tag);
+        });
+    }
+
+    if (!attTags.length && !defTags.length) return w.participant_count ?? '-';
+
+    const attHtml = attTags.map(warFlagImg).join('');
+    const defHtml = defTags.map(warFlagImg).join('');
+    const shown   = attTags.length + defTags.length;
+    const extra   = (w.participant_count || 0) - shown;
+
+    return `<div class="d-flex align-items-center justify-content-center gap-1 flex-wrap">
+        ${attHtml}
+        <span class="text-muted" style="font-size:0.7rem;line-height:1;">vs</span>
+        ${defHtml}
+        ${extra > 0 ? `<span class="text-muted" style="font-size:0.7rem;">+${extra}</span>` : ''}
+    </div>`;
+}
+
 function createWarRow(w) {
     const warLabel     = generateWarName(w);          // fancy generated name
     const rawType      = w.war_type || 'unknown';     // kept as subtitle
     const warDbId      = w.war_db_id || w.id || '';
     const casualties   = formatCasualties(w.total_casualties || 0);
     const cost         = '£' + formatNumber(w._total_cost || 0);
-    const participants = w.participant_count ?? '-';
+    const participants = participantFlags(w);
     const clickAttr    = warDbId ? `onclick="openWarModal(${warDbId})" style="cursor:pointer"` : '';
 
     return `
@@ -469,7 +534,7 @@ function renderBattlesTable() {
 
 function createBattleRow(b) {
     const winner = b.winner_tag
-        ? `<span class="badge bg-success">${b.winner_tag}</span>`
+        ? `${warFlagImg(b.winner_tag)}<span class="badge bg-success ms-1">${b.winner_tag}</span>`
         : '<span class="text-muted">—</span>';
     const warLabel = formatWarType(b.war_type);
 
@@ -478,8 +543,8 @@ function createBattleRow(b) {
             <td>${b.name || '<span class="text-muted">Unnamed</span>'}</td>
             <td>${formatGameDate(b.occurred_on)}</td>
             <td>${b.location_province_id || '—'}</td>
-            <td><span class="badge bg-danger">${b.attacker_tag}</span> (${b.attacker_casualties || 0})</td>
-            <td><span class="badge bg-primary">${b.defender_tag}</span> (${b.defender_casualties || 0})</td>
+            <td>${warFlagImg(b.attacker_tag)}<span class="badge bg-danger ms-1">${b.attacker_tag}</span> (${b.attacker_casualties || 0})</td>
+            <td>${warFlagImg(b.defender_tag)}<span class="badge bg-primary ms-1">${b.defender_tag}</span> (${b.defender_casualties || 0})</td>
             <td>${winner}</td>
             <td class="text-end">${formatCasualties(b._total_casualties || 0)}</td>
             <td><small class="text-muted">${warLabel}</small></td>
@@ -769,9 +834,12 @@ function renderParticipantList(participants) {
             ${participants.map(p => `
             <li class="list-group-item px-0 py-1">
                 <div class="d-flex justify-content-between align-items-start">
-                    <span class="fw-bold">${getCountryName(p.country_tag)}
-                        <small class="text-muted fw-normal">(${p.country_tag})</small>
-                    </span>
+                    <div class="d-flex align-items-center gap-2">
+                        ${warFlagImg(p.country_tag)}
+                        <span class="fw-bold">${getCountryName(p.country_tag)}
+                            <small class="text-muted fw-normal">(${p.country_tag})</small>
+                        </span>
+                    </div>
                     <span class="badge bg-secondary ms-2">support ${p.war_support ?? '—'}</span>
                 </div>
                 <div class="text-muted small">

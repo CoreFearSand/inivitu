@@ -3,12 +3,13 @@
 # ──────────────────────────────────────────────
 
 # ── Database files (live data, not tracked) ──
-victoria3_tracker/database/*.db
-victoria3_tracker/database/*.db-shm
-victoria3_tracker/database/*.db-wal
+*.db
+*.db-shm
+*.db-wal
 
 # ── Database backups ──
 victoria3_tracker/database/backup/
+backup/
 
 # ── Logs ──
 logs/
@@ -58,3 +59,6 @@ desktop.ini
 
 # ── rakaly binary (users download their own) ──
 rakaly.exe
+
+# ── config ──
+config.json

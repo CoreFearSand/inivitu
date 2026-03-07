@@ -45,8 +45,8 @@ class AdvancedEndpoints:
                 countries = data['countries']
                 metric_name = data.get('metric', 'gdp')
                 limit = max(1, min(int(data.get('limit', 50)), 200))
-                
-                if not countries or len(countries) > 10:  # Limit to 10 countries
+
+                if not isinstance(countries, list) or not countries or len(countries) > 10:
                     abort(400)
                 
                 # Validate country tags

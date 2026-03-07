@@ -15,37 +15,64 @@ from .manager import DatabaseManager
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# SQL fragment: four subquery columns added to any war list SELECT for
-# name-generation and Great Power detection.  The alias names are stable API
-# contract so front-end JS can rely on them without change.
+# CTE fragments for war name-generation and Great Power detection.
+# The alias names are stable API contract so front-end JS can rely on them.
+#
+# Instead of 4 correlated subqueries per war row (O(n²)), these CTEs scan
+# WarParticipants once each and are joined in.
 #
 # GP threshold: prestige >= 5 × global_avg  OR  >= 75 % of global_max.
 # ---------------------------------------------------------------------------
+
+# Placed after "WITH" — defines three CTEs used by the war list queries.
+_WAR_NAMING_CTE = """
+    _main_att AS (
+        SELECT war_id, country_tag AS main_attacker_tag
+        FROM (
+            SELECT war_id, country_tag,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY war_id ORDER BY prestige_at_war_start DESC
+                   ) AS rn
+            FROM WarParticipants WHERE side = 'attacker'
+        ) WHERE rn = 1
+    ),
+    _main_def AS (
+        SELECT war_id, country_tag AS main_defender_tag
+        FROM (
+            SELECT war_id, country_tag,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY war_id ORDER BY prestige_at_war_start DESC
+                   ) AS rn
+            FROM WarParticipants WHERE side = 'defender'
+        ) WHERE rn = 1
+    ),
+    _gp_agg AS (
+        SELECT wp2.war_id,
+               GROUP_CONCAT(CASE WHEN wp2.side = 'attacker' THEN wp2.country_tag END)
+                   AS gp_attacker_tags,
+               GROUP_CONCAT(CASE WHEN wp2.side = 'defender' THEN wp2.country_tag END)
+                   AS gp_defender_tags
+        FROM WarParticipants wp2
+        JOIN Wars w2 ON wp2.war_id = w2.id
+        WHERE (w2.global_avg_prestige > 0
+               AND wp2.prestige_at_war_start >= w2.global_avg_prestige * 5)
+           OR (w2.global_max_prestige > 0
+               AND wp2.prestige_at_war_start >= w2.global_max_prestige * 0.75)
+        GROUP BY wp2.war_id
+    )"""
+
+# SELECT columns that reference the CTE results — drop-in for _WAR_NAMING_COLS.
 _WAR_NAMING_COLS = """
-    (SELECT wp2.country_tag FROM WarParticipants wp2
-     WHERE wp2.war_id = w.id AND wp2.side = 'attacker'
-     ORDER BY wp2.prestige_at_war_start DESC LIMIT 1
-    ) AS main_attacker_tag,
-    (SELECT wp2.country_tag FROM WarParticipants wp2
-     WHERE wp2.war_id = w.id AND wp2.side = 'defender'
-     ORDER BY wp2.prestige_at_war_start DESC LIMIT 1
-    ) AS main_defender_tag,
-    (SELECT GROUP_CONCAT(wp2.country_tag) FROM WarParticipants wp2
-     WHERE wp2.war_id = w.id AND wp2.side = 'attacker'
-       AND (
-           (w.global_avg_prestige > 0 AND wp2.prestige_at_war_start >= w.global_avg_prestige * 5)
-           OR
-           (w.global_max_prestige > 0 AND wp2.prestige_at_war_start >= w.global_max_prestige * 0.75)
-       )
-    ) AS gp_attacker_tags,
-    (SELECT GROUP_CONCAT(wp2.country_tag) FROM WarParticipants wp2
-     WHERE wp2.war_id = w.id AND wp2.side = 'defender'
-       AND (
-           (w.global_avg_prestige > 0 AND wp2.prestige_at_war_start >= w.global_avg_prestige * 5)
-           OR
-           (w.global_max_prestige > 0 AND wp2.prestige_at_war_start >= w.global_max_prestige * 0.75)
-       )
-    ) AS gp_defender_tags"""
+    _main_att.main_attacker_tag,
+    _main_def.main_defender_tag,
+    _gp_agg.gp_attacker_tags,
+    _gp_agg.gp_defender_tags"""
+
+# JOIN clause to attach the three CTEs to the main war query.
+_WAR_NAMING_JOINS = """
+    LEFT JOIN _main_att ON _main_att.war_id = w.id
+    LEFT JOIN _main_def ON _main_def.war_id = w.id
+    LEFT JOIN _gp_agg   ON _gp_agg.war_id   = w.id"""
 
 
 class DataAccessLayer:
@@ -954,6 +981,7 @@ class DataAccessLayer:
 
             elif playthrough_id:
                 results = self.db.execute_query(f"""
+                    WITH {_WAR_NAMING_CTE}
                     SELECT
                         w.id                                             AS war_db_id,
                         w.save_war_id,
@@ -974,6 +1002,7 @@ class DataAccessLayer:
                         {_WAR_NAMING_COLS}
                     FROM Wars w
                     LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+                    {_WAR_NAMING_JOINS}
                     WHERE w.playthrough_id = ?
                     GROUP BY w.id
                     ORDER BY w.started_on DESC
@@ -982,6 +1011,7 @@ class DataAccessLayer:
 
             else:
                 results = self.db.execute_query(f"""
+                    WITH {_WAR_NAMING_CTE}
                     SELECT
                         w.id                                             AS war_db_id,
                         w.save_war_id,
@@ -1001,6 +1031,7 @@ class DataAccessLayer:
                         {_WAR_NAMING_COLS}
                     FROM Wars w
                     LEFT JOIN WarParticipants wp ON w.id = wp.war_id
+                    {_WAR_NAMING_JOINS}
                     GROUP BY w.id
                     ORDER BY w.started_on DESC
                     LIMIT ?

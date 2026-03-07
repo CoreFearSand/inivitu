@@ -4,6 +4,7 @@ Flask REST API for Victoria 3 Game Tracker.
 Provides REST endpoints for accessing game data and statistics.
 """
 
+import hashlib
 import logging
 import csv
 import io
@@ -26,6 +27,43 @@ logger = logging.getLogger(__name__)
 # Maximum rows the /api/countries endpoint will return in one request.
 # High enough for all realistic save files; raise in config if needed.
 MAX_COUNTRIES_PER_REQUEST = 1000
+
+# Country tags whose wiki flag filename differs from the standard Flag_{TAG}.png
+_FLAG_EXCEPTIONS: dict[str, str] = {
+    'GBR': 'GBR_uk',
+    'AWS': 'red_flag',
+    'VNZ': 'VNZ_monarchy',
+    'NPU': 'PEU',
+    'ZAI': 'YEM'
+}
+
+_WIKI_FLAG_BASE = 'https://vic3.paradoxwikis.com/images'
+
+def _flag_url(tag: str) -> str:
+    """Return the Paradox wiki direct image URL for a country flag (tag-based)."""
+    suffix = _FLAG_EXCEPTIONS.get(tag, tag)
+    filename = f'Flag_{suffix}.png'
+    md5 = hashlib.md5(filename.encode()).hexdigest()
+    return f'{_WIKI_FLAG_BASE}/{md5[0]}/{md5[:2]}/{filename}'
+
+# Country names where the wiki filename uses different capitalisation than the DB.
+# Keys are lowercased for case-insensitive matching; values are the exact wiki stem.
+_FLAG_NAME_OVERRIDES: dict[str, str] = {
+    'hesse-kassel': 'Hesse-Kassel',
+    'saxe-weimar':  'Saxe-Weimar',
+    'dar al kuti':  'Dar_al_Kuti',
+    'mecklenburg-strelitz': 'Mecklenburg-Strelitz',
+    'saxe-meiningen': 'Saxe-Meiningen',
+    'schaumburg-lippe': 'Schaumburg-Lippe'
+}
+
+def _flag_url_alt(name: str) -> str:
+    """Fallback flag URL using the country name directly (e.g. Jolof.png, Absaroka.png).
+    Checks _FLAG_NAME_OVERRIDES first for capitalisation corrections."""
+    stem = _FLAG_NAME_OVERRIDES.get(name.lower(), name.replace(' ', '_'))
+    filename = f'{stem}.png'
+    md5 = hashlib.md5(filename.encode()).hexdigest()
+    return f'{_WIKI_FLAG_BASE}/{md5[0]}/{md5[:2]}/{filename}'
 
 
 class Victoria3API:
@@ -231,7 +269,9 @@ class Victoria3API:
                         'country_tag': r['country_tag'],
                         'name': r['name'],
                         'is_player_country': bool(r['is_player_country']),
-                        'latest_date': r.get('latest_date') or r.get('in_game_date')
+                        'latest_date': r.get('latest_date') or r.get('in_game_date'),
+                        'flag_url': _flag_url(r['country_tag']),
+                        'flag_url_alt': _flag_url_alt(r['name'] or r['country_tag'])
                     })
                 
                 return jsonify({
@@ -823,6 +863,8 @@ class Victoria3API:
             """
             try:
                 fmt = request.args.get('format', 'csv').lower()
+                if fmt not in ('csv', 'json'):
+                    return jsonify({'error': "Invalid format; use 'csv' or 'json'"}), 400
                 playthrough_id = request.args.get('playthrough_id')
                 metric_name = request.args.get('metric')
                 limit = min(request.args.get('limit', 1000, type=int), 10000)
@@ -895,6 +937,8 @@ class Victoria3API:
             """
             try:
                 fmt = request.args.get('format', 'csv').lower()
+                if fmt not in ('csv', 'json'):
+                    return jsonify({'error': "Invalid format; use 'csv' or 'json'"}), 400
                 playthrough_id = request.args.get('playthrough_id')
                 limit = min(request.args.get('limit', 500, type=int), 5000)
 

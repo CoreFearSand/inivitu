@@ -2,6 +2,10 @@
  * Countries-specific JavaScript for Victoria 3 Game Tracker
  */
 
+// Country picker state
+let _pickerData = [];
+const _pickerSelected = new Set();
+
 // Country detail state
 let countryState = {
     charts: {},
@@ -89,6 +93,10 @@ function setupEventHandlers() {
         
         if (e.target.matches('#compare-country') || e.target.closest('#compare-country')) {
             handleCompare();
+        }
+
+        if (e.target.matches('#run-comparison') || e.target.closest('#run-comparison')) {
+            runComparison();
         }
     });
     
@@ -494,31 +502,247 @@ function handleTabChange(targetId) {
 }
 
 /**
- * Load comparison data
+ * Load comparison data — populates the searchable country picker
  */
 async function loadComparisonData() {
-    const comparisonCountries = document.getElementById('comparison-countries');
-    if (!comparisonCountries) return;
-    
     try {
-        const data = await getCountries();
-        
-        comparisonCountries.innerHTML = '';
-        if (data.countries && data.countries.length > 0) {
-            data.countries.forEach(country => {
-                if (country.country_tag !== window.countryData.tag) {
-                    const option = document.createElement('option');
-                    option.value = country.country_tag;
-                    option.textContent = country.name || country.country_tag;
-                    comparisonCountries.appendChild(option);
-                }
-            });
+        const data = await getCountries({ limit: 1000 });
+        if (data.countries) {
+            initCountryPicker(data.countries);
         }
-        
     } catch (error) {
         console.error('Error loading comparison data:', error);
         showAlert('Failed to load comparison data', 'danger');
     }
+}
+
+// ── Searchable country picker ─────────────────────────────────────────────
+
+function initCountryPicker(countries) {
+    _pickerData = countries
+        .filter(c => c.country_tag !== window.countryData.tag)
+        .map(c => ({ tag: c.country_tag, name: c.name || c.country_tag, flagUrl: c.flag_url || '', flagUrlAlt: c.flag_url_alt || '' }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    _pickerSelected.clear();
+    _syncHiddenSelect();
+    _renderPickerChips();
+
+    const input = document.getElementById('country-picker-input');
+    const box   = document.getElementById('country-picker-box');
+    const drop  = document.getElementById('country-picker-dropdown');
+    if (!input || !box || !drop) return;
+
+    input.addEventListener('focus', () => {
+        _renderPickerDropdown(input.value);
+        drop.style.display = '';
+    });
+    input.addEventListener('input', () => {
+        _renderPickerDropdown(input.value);
+        drop.style.display = '';
+    });
+    box.addEventListener('click', () => input.focus());
+
+    // Close dropdown when clicking outside
+    document.addEventListener('mousedown', function pickerClose(e) {
+        const wrapper = document.getElementById('country-picker-box')?.parentElement;
+        if (wrapper && !wrapper.contains(e.target)) {
+            drop.style.display = 'none';
+        }
+    });
+}
+
+function _renderPickerChips() {
+    const box   = document.getElementById('country-picker-box');
+    const input = document.getElementById('country-picker-input');
+    if (!box || !input) return;
+
+    box.querySelectorAll('.picker-chip').forEach(el => el.remove());
+
+    _pickerSelected.forEach(tag => {
+        const entry = _pickerData.find(p => p.tag === tag);
+        const flagHtml = entry?.flagUrl
+            ? `<img src="${entry.flagUrl}" data-alt="${entry.flagUrlAlt || ''}" style="width:16px;height:11px;object-fit:cover;border-radius:1px;flex-shrink:0;" onerror="var a=this.dataset.alt;if(a){this.src=a;this.dataset.alt=''}else{this.style.display='none'}">`
+            : '';
+        const chip = document.createElement('span');
+        chip.className = 'picker-chip badge bg-primary d-inline-flex align-items-center gap-1';
+        chip.style.cssText = 'font-size: 0.75rem; cursor: default; user-select: none;';
+        chip.innerHTML = `${flagHtml}${getCountryName(tag)} <span data-tag="${tag}" style="cursor:pointer; opacity:.8; font-size:.9em;">&times;</span>`;
+        chip.querySelector('span').addEventListener('mousedown', e => {
+            e.preventDefault();
+            _togglePickerTag(tag);
+        });
+        box.insertBefore(chip, input);
+    });
+}
+
+function _renderPickerDropdown(filter) {
+    const drop = document.getElementById('country-picker-dropdown');
+    if (!drop) return;
+
+    const term = (filter || '').toLowerCase();
+    const visible = _pickerData.filter(c =>
+        c.name.toLowerCase().includes(term) || c.tag.toLowerCase().includes(term)
+    );
+
+    drop.innerHTML = '';
+    if (visible.length === 0) {
+        drop.innerHTML = '<div class="px-3 py-2 text-muted small">No countries found</div>';
+        return;
+    }
+
+    visible.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'px-3 py-1 small d-flex align-items-center gap-2';
+        item.style.cssText = 'cursor: pointer; user-select: none;';
+        const checked = _pickerSelected.has(c.tag);
+        const flagHtml = c.flagUrl
+            ? `<img src="${c.flagUrl}" data-alt="${c.flagUrlAlt || ''}" style="width:20px;height:14px;object-fit:cover;border-radius:2px;flex-shrink:0;" onerror="var a=this.dataset.alt;if(a){this.src=a;this.dataset.alt=''}else{this.style.display='none'}">`
+            : '<span style="width:20px;flex-shrink:0;"></span>';
+        item.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''} style="pointer-events:none; flex-shrink:0;"> ${flagHtml} <span>${c.name}</span> <small class="text-muted ms-auto">${c.tag}</small>`;
+        item.addEventListener('mousedown', e => {
+            e.preventDefault();
+            _togglePickerTag(c.tag);
+        });
+        item.addEventListener('mouseover', () => item.style.background = '#f8f9fa');
+        item.addEventListener('mouseout',  () => item.style.background = '');
+        drop.appendChild(item);
+    });
+}
+
+function _togglePickerTag(tag) {
+    if (_pickerSelected.has(tag)) {
+        _pickerSelected.delete(tag);
+    } else {
+        _pickerSelected.add(tag);
+    }
+    _syncHiddenSelect();
+    _renderPickerChips();
+    const input = document.getElementById('country-picker-input');
+    _renderPickerDropdown(input?.value || '');
+}
+
+function _syncHiddenSelect() {
+    const select = document.getElementById('comparison-countries');
+    if (!select) return;
+    select.innerHTML = '';
+    _pickerSelected.forEach(tag => {
+        const opt = document.createElement('option');
+        opt.value = tag;
+        opt.selected = true;
+        select.appendChild(opt);
+    });
+}
+
+/**
+ * Run comparison between selected countries
+ */
+async function runComparison() {
+    const select = document.getElementById('comparison-countries');
+    if (!select) return;
+
+    const selectedTags = Array.from(select.selectedOptions).map(o => o.value);
+    if (selectedTags.length === 0) {
+        showAlert('Please select at least one country to compare', 'warning', 3000);
+        return;
+    }
+
+    const metric = document.getElementById('comparison-metric-select')?.value || 'gdp';
+    const allTags = [window.countryData.tag, ...selectedTags.filter(t => t !== window.countryData.tag)];
+
+    const placeholder = document.getElementById('comparison-placeholder');
+    const chartContainer = document.getElementById('comparison-chart-container');
+
+    if (placeholder) placeholder.style.display = 'none';
+    if (chartContainer) {
+        chartContainer.style.display = '';
+        chartContainer.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    }
+
+    try {
+        const response = await fetch('/api/compare/countries', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ countries: allTags, metric, limit: 50 })
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        renderComparisonChart(data, metric);
+
+    } catch (error) {
+        console.error('Error running comparison:', error);
+        if (chartContainer) {
+            chartContainer.innerHTML = '<div class="text-center text-danger py-4">Failed to load comparison data</div>';
+        }
+    }
+}
+
+/**
+ * Render the comparison multi-line chart
+ */
+function renderComparisonChart(data, metric) {
+    const chartContainer = document.getElementById('comparison-chart-container');
+    if (!chartContainer) return;
+
+    chartContainer.innerHTML = '<canvas id="comparison-chart"></canvas>';
+    const canvas = document.getElementById('comparison-chart');
+    const ctx = canvas.getContext('2d');
+
+    if (countryState.charts['comparison']) {
+        countryState.charts['comparison'].destroy();
+    }
+
+    const colors = ['#007bff', '#28a745', '#dc3545', '#ffc107', '#17a2b8', '#6f42c1', '#fd7e14', '#20c997', '#e83e8c', '#6c757d'];
+
+    const datasets = Object.entries(data.data).map(([tag, records], i) => {
+        const sorted = [...records].reverse();
+        const points = sorted.map(r => ({ x: r.in_game_date || r.recorded_at, y: r.amount }));
+        return {
+            label: getCountryName(tag),
+            data: points,
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length] + '20',
+            fill: false,
+            tension: 0.1,
+            pointRadius: 2,
+            pointHoverRadius: 4
+        };
+    });
+
+    const metricName = metric.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+    countryState.charts['comparison'] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        parser: 'yyyy-MM-dd',
+                        displayFormats: { day: 'MMM dd', month: 'MMM yyyy' }
+                    },
+                    title: { display: true, text: 'Date' }
+                },
+                y: {
+                    title: { display: true, text: metricName },
+                    ticks: { callback: v => formatNumber(v) }
+                }
+            },
+            plugins: {
+                legend: { display: true, position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.parsed.y)}`
+                    }
+                }
+            }
+        }
+    });
 }
 
 /**
@@ -594,3 +818,5 @@ window.loadSocialChart = loadSocialChart;
 window.loadHistoryChart = loadHistoryChart;
 window.loadRankings = loadRankings;
 window.loadPlaythroughOptions = loadPlaythroughOptions;
+window.runComparison = runComparison;
+window.renderComparisonChart = renderComparisonChart;
