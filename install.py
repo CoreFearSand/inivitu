@@ -318,7 +318,7 @@ def main():
     # Check if this is a fresh installation or update
     config_exists = Path("config.json").exists()
     if config_exists:
-        print("ℹ️  Existing installation detected")
+        print("[i]  Existing installation detected")
         update_mode = prompt_user_choice(
             "What would you like to do?",
             ["Update/repair existing installation", "Fresh installation (overwrites config)", "Exit"],
@@ -329,7 +329,7 @@ def main():
             print("Installation cancelled")
             sys.exit(0)
         elif update_mode == 1:  # Fresh installation
-            print("\n⚠️  This will overwrite your existing configuration!")
+            print("\n[!]  This will overwrite your existing configuration!")
             confirm = prompt_user_choice(
                 "Are you sure you want to continue?",
                 ["Yes, overwrite configuration", "No, cancel installation"]
@@ -349,7 +349,7 @@ def main():
         if install_deps == 0:  # Install automatically
             print("\nInstalling dependencies...")
             if not install_dependencies():
-                print("\n❌ Automatic installation failed.")
+                print("\n✗ Automatic installation failed.")
                 print("Please install dependencies manually:")
                 print("   pip install -r requirements.txt")
                 sys.exit(1)
@@ -380,12 +380,12 @@ def main():
     
     # Create configuration
     if not create_config(save_directory):
-        print("❌ Failed to create configuration file")
+        print("✗ Failed to create configuration file")
         sys.exit(1)
     
     # Create directories
     if not create_directories():
-        print("❌ Failed to create required directories")
+        print("✗ Failed to create required directories")
         sys.exit(1)
     
     # Test installation
@@ -408,28 +408,28 @@ def main():
         warnings.append("Save directory not configured - update config.json")
     
     if warnings:
-        print("\n⚠️  WARNINGS:")
+        print("\n[!]  WARNINGS:")
         for warning in warnings:
             print(f"   - {warning}")
         print()
     
     # Show usage instructions
-    print("🚀 HOW TO START:")
+    print("HOW TO START:")
     print("   python victoria3_tracker.py              # Full application with validation")
     print("   python victoria3_tracker.py --web-only   # Web interface only")
     print("   python victoria3_tracker.py --status     # Check status")
     print("   python victoria3_tracker.py --help       # Show all options")
     print()
-    print("📊 WEB INTERFACE:")
+    print("WEB INTERFACE:")
     print("   http://127.0.0.1:8080")
     print()
     
     if save_directory:
-        print(f"📁 MONITORING DIRECTORY:")
+        print(f"MONITORING DIRECTORY:")
         print(f"   {save_directory}")
         print()
     
-    print("📖 NEXT STEPS:")
+    print("NEXT STEPS:")
     if not rakaly_available:
         print("   1. Download rakaly.exe (see instructions above)")
     if save_directory:
@@ -440,7 +440,7 @@ def main():
         print("   3. Start Victoria 3 and create some save games")
         print("   4. Run the tracker to start monitoring")
     
-    print("\n🌍 Enjoy tracking your Victoria 3 campaigns!")
+    print("\nEnjoy tracking your Victoria 3 campaigns!")
     
     # Ask if user wants to start the application now
     if rakaly_available and save_directory:

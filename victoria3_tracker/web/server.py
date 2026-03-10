@@ -4,7 +4,6 @@ Web server for Victoria 3 Game Tracker dashboard.
 Serves the web interface and integrates with the REST API.
 """
 
-import hashlib
 import logging
 import csv
 import os
@@ -12,32 +11,7 @@ import secrets
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from pathlib import Path
 
-_FLAG_EXCEPTIONS: dict[str, str] = {
-    'GBR': 'GBR_uk',
-}
-
-def _flag_url(tag: str) -> str:
-    """Return the Paradox wiki direct image URL for a country flag (tag-based)."""
-    suffix = _FLAG_EXCEPTIONS.get(tag, tag)
-    filename = f'Flag_{suffix}.png'
-    md5 = hashlib.md5(filename.encode()).hexdigest()
-    return f'https://vic3.paradoxwikis.com/images/{md5[0]}/{md5[:2]}/{filename}'
-
-# Country names where the wiki filename uses different capitalisation than the DB.
-# Keys are lowercased for case-insensitive matching; values are the exact wiki stem.
-_FLAG_NAME_OVERRIDES: dict[str, str] = {
-    'hesse-kassel': 'Hesse-Kassel',
-    'saxe-weimar':  'Saxe-Weimar',
-    'dar al kuti':  'Dar_al_Kuti',
-}
-
-def _flag_url_alt(name: str) -> str:
-    """Fallback flag URL using the country name directly (e.g. Jolof.png, Absaroka.png).
-    Checks _FLAG_NAME_OVERRIDES first for capitalisation corrections."""
-    stem = _FLAG_NAME_OVERRIDES.get(name.lower(), name.replace(' ', '_'))
-    filename = f'{stem}.png'
-    md5 = hashlib.md5(filename.encode()).hexdigest()
-    return f'https://vic3.paradoxwikis.com/images/{md5[0]}/{md5[:2]}/{filename}'
+from ..api.flag_utils import flag_url as _flag_url, flag_url_alt as _flag_url_alt
 
 from ..api import Victoria3API
 from ..database import DatabaseManager

@@ -503,6 +503,9 @@ async function loadWarAdjectivesCSV() {
 function getWarAdjective(tag) {
     if (!tag) return 'Unknown';
     const upper = tag.toUpperCase();
+    // Placeholder/rebellion tags (D00, D01, D02, ...) represent rebel movements
+    // with no real adjective — treat as Unknown to trigger Revolution naming
+    if (/^D\d+$/.test(upper)) return 'Unknown';
     if (V3WarAdjectives[upper]) return V3WarAdjectives[upper];
     // Fallback: last word of the country's full name
     const fullName = V3CountryNames[upper];
@@ -569,6 +572,10 @@ function generateWarName(war) {
     const att = sideLabel(gpAtt, war.main_attacker_tag);
     const def = sideLabel(gpDef, war.main_defender_tag);
 
+    // For revolution/secession use the primary participant directly (not GP aggregation)
+    const attMain = war.main_attacker_tag ? getWarAdjective(war.main_attacker_tag) : att;
+    const defMain = war.main_defender_tag ? getWarAdjective(war.main_defender_tag) : def;
+
     // If both sides are unknown (e.g. Paradox wars with 0 participants),
     // fall back to a type+region+year label instead of "Unknown-Unknown War of YYYY"
     if (att === 'Unknown' && def === 'Unknown') {
@@ -603,13 +610,16 @@ function generateWarName(war) {
             return `${att} Uprising of ${year}`;
         case 'revolution':
         case 'dp_revolution':
-            // Revolutionary wars: named after the government being challenged (defender side)
-            return `${def} Revolutionary War of ${year}`;
+            // Use primary defender (not GP aggregation) — the gov't being challenged
+            return `${defMain} Revolutionary War of ${year}`;
         case 'secession':
         case 'dp_secession':
-            // Secession wars: named after the seceding nation (attacker side)
-            return `${att} War of Independence of ${year}`;
+            // Use primary attacker (not GP aggregation) — the seceding nation
+            return `${attMain} War of Independence of ${year}`;
         default:
+            // If the attacker is unidentified (e.g. a rebellion with no recorded tag),
+            // treat it as a Revolutionary War against the primary defender government
+            if (att === 'Unknown') return `${defMain} Revolutionary War of ${year}`;
             // Generic fallback: "British-Russo War of 1840"
             return `${att}-${def} War of ${year}`;
     }

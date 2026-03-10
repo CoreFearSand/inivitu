@@ -53,12 +53,7 @@ CREATE TABLE IF NOT EXISTS MetricTypes (
     unit TEXT,
     description TEXT,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT valid_metric_name CHECK (name IN (
-        'gdp', 'weekly_income', 'money_holding', 'prestige', 
-        'literacy', 'avgsol', 'population', 'military_size', 
-        'culture_amount', 'power_projection'
-    ))
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Country Metrics: Time-series data with strict validation
@@ -73,7 +68,6 @@ CREATE TABLE IF NOT EXISTS CountryMetrics (
     FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
     FOREIGN KEY (metric_type_id) REFERENCES MetricTypes(metric_type_id),
     FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
-    CONSTRAINT positive_amount CHECK (amount >= 0),
     CONSTRAINT valid_date CHECK (recorded_at >= '1836-01-01' AND recorded_at <= '1936-12-31'),
     UNIQUE(country_id, metric_type_id, recorded_at)
 );
@@ -127,15 +121,36 @@ CREATE TABLE IF NOT EXISTS Battles (
     war_id INTEGER NOT NULL,              -- references Wars.id
     name TEXT,
     occurred_on DATE,
+    ended_on DATE,
     location_province_id TEXT,
     attacker_tag TEXT NOT NULL CHECK (length(attacker_tag) = 3),
     defender_tag TEXT NOT NULL CHECK (length(defender_tag) = 3),
-    attacker_casualties INTEGER DEFAULT 0 CHECK (attacker_casualties >= 0),
-    defender_casualties INTEGER DEFAULT 0 CHECK (defender_casualties >= 0),
+    attacker_casualties REAL DEFAULT 0 CHECK (attacker_casualties >= 0),
+    defender_casualties REAL DEFAULT 0 CHECK (defender_casualties >= 0),
+    attacker_battalions_lost INTEGER DEFAULT 0,
+    defender_battalions_lost INTEGER DEFAULT 0,
     winner_tag TEXT,
+    battle_type TEXT DEFAULT 'land',
+    status TEXT DEFAULT 'unknown',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (war_id) REFERENCES Wars(id) ON DELETE CASCADE,
     CONSTRAINT different_combatants CHECK (attacker_tag != defender_tag)
+);
+
+-- Interest Groups: Political factions per country per save
+CREATE TABLE IF NOT EXISTS InterestGroups (
+    ig_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    country_id INTEGER NOT NULL,
+    save_id TEXT NOT NULL,
+    ig_type TEXT NOT NULL,           -- e.g. 'ig_industrialists'
+    clout REAL DEFAULT 0,            -- political clout 0-100
+    approval REAL DEFAULT 0,         -- approval -100 to 100
+    membership INTEGER DEFAULT 0,    -- number of pops in this IG
+    in_government BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
+    FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+    UNIQUE(country_id, save_id, ig_type)
 );
 
 -- Processing Log: Track file processing history and errors
@@ -195,6 +210,8 @@ CREATE INDEX IF NOT EXISTS idx_war_participants_country_tag ON WarParticipants(c
 CREATE INDEX IF NOT EXISTS idx_battles_war_id ON Battles(war_id);
 CREATE INDEX IF NOT EXISTS idx_processing_log_filename ON ProcessingLog(filename);
 CREATE INDEX IF NOT EXISTS idx_processing_log_status ON ProcessingLog(status);
+CREATE INDEX IF NOT EXISTS idx_interest_groups_country_id ON InterestGroups(country_id);
+CREATE INDEX IF NOT EXISTS idx_interest_groups_save_id ON InterestGroups(save_id);
 
 -- Optional indexes for map features
 CREATE INDEX IF NOT EXISTS idx_territories_save_id ON Territories(save_id);
@@ -262,14 +279,17 @@ JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id;
 DEFAULT_METRIC_TYPES = [
     ('gdp', 'GDP', '£', 'Gross Domestic Product'),
     ('weekly_income', 'Weekly Income', '£/week', 'Government weekly income'),
-    ('money_holding', 'Treasury', '£', 'Government money reserves'),
+    ('money_holding', 'Net Treasury', '£', 'Net treasury (money minus outstanding debt)'),
     ('prestige', 'Prestige', 'points', 'National prestige'),
     ('literacy', 'Literacy', '%', 'Population literacy rate'),
     ('avgsol', 'Standard of Living', 'index', 'Average standard of living'),
     ('population', 'Population', 'people', 'Total population'),
-    ('military_size', 'Military Size', 'people', 'Military workforce'),
+    ('army_personnel', 'Army Personnel', 'people', 'Military workforce (army)'),
     ('culture_amount', 'Cultural Diversity', 'count', 'Number of cultures'),
-    ('power_projection', 'Power Projection', 'points', 'Military power projection')
+    ('power_projection', 'Power Projection', 'points', 'Military power projection'),
+    ('infamy', 'Infamy', 'points', 'National infamy / aggressiveness'),
+    ('credit', 'Credit Limit', '£', 'Maximum borrowing capacity'),
+    ('prestige_tier', 'Prestige Tier', 'tier', 'GP rank tier (1=Great Power … 4=Minor)'),
 ]
 
 def create_schema(connection: sqlite3.Connection) -> None:
@@ -328,7 +348,7 @@ def verify_schema(connection: sqlite3.Connection) -> bool:
         required_tables = [
             'Saves', 'Countries', 'MetricTypes', 'CountryMetrics',
             'Wars', 'WarParticipants', 'Battles', 'ProcessingLog',
-            'Territories', 'TerritoryBorders'
+            'Territories', 'TerritoryBorders', 'InterestGroups'
         ]
         
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -369,25 +389,210 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     Args:
         connection: SQLite database connection
     """
-    migrations = [
-        # v1.2.0 — war naming / GP detection columns
+    cursor = connection.cursor()
+
+    # -----------------------------------------------------------------------
+    # v1.2.0 — war naming / GP detection columns
+    # -----------------------------------------------------------------------
+    for sql in [
         "ALTER TABLE Wars ADD COLUMN global_avg_prestige REAL DEFAULT 0",
         "ALTER TABLE Wars ADD COLUMN global_max_prestige REAL DEFAULT 0",
         "ALTER TABLE WarParticipants ADD COLUMN prestige_at_war_start REAL DEFAULT 0",
-    ]
-    cursor = connection.cursor()
-    for sql in migrations:
+    ]:
         try:
             cursor.execute(sql)
-            logger.info(f"Migration applied: {sql[:60]}…")
+            logger.info(f"Migration applied: {sql[:60]}...")
         except sqlite3.OperationalError as e:
             if "duplicate column" in str(e).lower():
                 pass  # column already exists — safe to ignore
             else:
                 raise
+
+    # -----------------------------------------------------------------------
+    # v1.4.0 — battle extractor fix: new Battles columns
+    # -----------------------------------------------------------------------
+    for sql in [
+        "ALTER TABLE Battles ADD COLUMN ended_on DATE",
+        "ALTER TABLE Battles ADD COLUMN attacker_battalions_lost INTEGER DEFAULT 0",
+        "ALTER TABLE Battles ADD COLUMN defender_battalions_lost INTEGER DEFAULT 0",
+        "ALTER TABLE Battles ADD COLUMN battle_type TEXT DEFAULT 'land'",
+        "ALTER TABLE Battles ADD COLUMN status TEXT DEFAULT 'unknown'",
+    ]:
+        try:
+            cursor.execute(sql)
+            logger.info(f"Migration applied: {sql[:60]}...")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                pass
+            else:
+                raise
+
+    # -----------------------------------------------------------------------
+    # v1.3.0 — drop restrictive CHECK constraint on MetricTypes.name so new
+    #           metric types can be inserted on existing databases.
+    #
+    # SQLite cannot ALTER a constraint; we must rebuild the table.
+    # We check whether the old constraint still exists before rebuilding.
+    # -----------------------------------------------------------------------
+    cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='MetricTypes'"
+    )
+    row = cursor.fetchone()
+    if row and "valid_metric_name" in (row[0] or ""):
+        logger.info("Migration v1.3.0: rebuilding MetricTypes to remove CHECK constraint…")
+        cursor.executescript("""
+            PRAGMA foreign_keys = OFF;
+
+            CREATE TABLE IF NOT EXISTS MetricTypes_v13 (
+                metric_type_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                unit TEXT,
+                description TEXT,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT OR IGNORE INTO MetricTypes_v13
+                SELECT metric_type_id, name, display_name, unit, description,
+                       is_active, created_at
+                FROM MetricTypes;
+
+            DROP TABLE MetricTypes;
+            ALTER TABLE MetricTypes_v13 RENAME TO MetricTypes;
+
+            PRAGMA foreign_keys = ON;
+        """)
+        logger.info("Migration v1.3.0: MetricTypes rebuilt successfully.")
+
+    # -----------------------------------------------------------------------
+    # v1.3.1 — rename military_size → army_personnel in MetricTypes.
+    # CountryMetrics rows reference metric_type_id (FK), so renaming the
+    # MetricTypes row automatically applies to all historical data.
+    # -----------------------------------------------------------------------
+    cursor.execute(
+        "SELECT metric_type_id FROM MetricTypes WHERE name = 'military_size'"
+    )
+    if cursor.fetchone():
+        cursor.execute("""
+            UPDATE MetricTypes
+            SET name = 'army_personnel',
+                display_name = 'Army Personnel',
+                unit = 'people',
+                description = 'Military workforce (army)'
+            WHERE name = 'military_size'
+        """)
+        logger.info("Migration v1.3.1: renamed MetricTypes 'military_size' → 'army_personnel'.")
+
+    # -----------------------------------------------------------------------
+    # v1.3.2 — insert new metric types (idempotent via INSERT OR IGNORE).
+    # -----------------------------------------------------------------------
+    new_metrics = [
+        ('infamy',        'Infamy',        'points', 'National infamy / aggressiveness'),
+        ('debt',          'Debt',          '£',      'Outstanding loan principal'),
+        ('credit',        'Credit Limit',  '£',      'Maximum borrowing capacity'),
+        ('prestige_tier', 'Prestige Tier', 'tier',   'GP rank tier (1=Great Power … 4=Minor)'),
+    ]
+    cursor.executemany(
+        "INSERT OR IGNORE INTO MetricTypes (name, display_name, unit, description) VALUES (?, ?, ?, ?)",
+        new_metrics,
+    )
+    inserted = sum(1 for m in new_metrics if cursor.rowcount)  # rough log
+    logger.info(f"Migration v1.3.2: ensured {len(new_metrics)} new metric types exist.")
+
+    # -----------------------------------------------------------------------
+    # v1.3.3 — create InterestGroups table if it doesn't exist yet.
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS InterestGroups (
+            ig_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            country_id INTEGER NOT NULL,
+            save_id TEXT NOT NULL,
+            ig_type TEXT NOT NULL,
+            clout REAL DEFAULT 0,
+            approval REAL DEFAULT 0,
+            membership INTEGER DEFAULT 0,
+            in_government BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
+            FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+            UNIQUE(country_id, save_id, ig_type)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_interest_groups_country_id ON InterestGroups(country_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_interest_groups_save_id ON InterestGroups(save_id)"
+    )
+    logger.info("Migration v1.3.3: InterestGroups table ensured.")
+
+    # -----------------------------------------------------------------------
+    # v1.3.4 — remove positive_amount CHECK constraint from CountryMetrics
+    #           so net treasury (money − debt) can be stored as a negative.
+    # -----------------------------------------------------------------------
+    cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='CountryMetrics'"
+    )
+    row = cursor.fetchone()
+    if row and "positive_amount" in (row[0] or ""):
+        logger.info("Migration v1.3.4: rebuilding CountryMetrics to remove positive_amount constraint…")
+        cursor.executescript("""
+            PRAGMA foreign_keys = OFF;
+
+            CREATE TABLE IF NOT EXISTS CountryMetrics_v14 (
+                metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                country_id INTEGER NOT NULL,
+                metric_type_id INTEGER NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                recorded_at DATE NOT NULL,
+                save_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
+                FOREIGN KEY (metric_type_id) REFERENCES MetricTypes(metric_type_id),
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                CONSTRAINT valid_date CHECK (recorded_at >= '1836-01-01' AND recorded_at <= '1936-12-31'),
+                UNIQUE(country_id, metric_type_id, recorded_at)
+            );
+
+            INSERT OR IGNORE INTO CountryMetrics_v14
+                SELECT metric_id, country_id, metric_type_id, amount,
+                       recorded_at, save_id, created_at
+                FROM CountryMetrics;
+
+            DROP TABLE CountryMetrics;
+            ALTER TABLE CountryMetrics_v14 RENAME TO CountryMetrics;
+
+            PRAGMA foreign_keys = ON;
+        """)
+        # Recreate indexes that were on CountryMetrics
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_metrics_country_date ON CountryMetrics(country_id, recorded_at)",
+            "CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON CountryMetrics(metric_type_id, recorded_at)",
+            "CREATE INDEX IF NOT EXISTS idx_metrics_save_id ON CountryMetrics(save_id)",
+        ]:
+            cursor.execute(idx_sql)
+        logger.info("Migration v1.3.4: CountryMetrics rebuilt, indexes restored.")
+
+    # -----------------------------------------------------------------------
+    # v1.3.5 — deactivate standalone 'debt' metric type (treasury now stores
+    #           net = money − debt_principal, so 'debt' is redundant).
+    # -----------------------------------------------------------------------
+    cursor.execute(
+        "UPDATE MetricTypes SET is_active = FALSE WHERE name = 'debt'"
+    )
+    # Update money_holding display name to reflect net treasury
+    cursor.execute("""
+        UPDATE MetricTypes
+        SET display_name = 'Net Treasury',
+            description  = 'Net treasury (money minus outstanding debt)'
+        WHERE name = 'money_holding'
+    """)
+    logger.info("Migration v1.3.5: 'debt' deactivated; 'money_holding' renamed to Net Treasury.")
+
     connection.commit()
 
 
 def get_schema_version() -> str:
     """Get the current schema version."""
-    return "1.2.0"
+    return "1.3.5"

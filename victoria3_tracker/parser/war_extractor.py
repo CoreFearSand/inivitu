@@ -37,11 +37,16 @@ class Battle:
     attacker_tag: str
     defender_tag: str
     occurred_on: Optional[str] = None
+    ended_on: Optional[str] = None
     location_province_id: Optional[str] = None
-    attacker_casualties: int = 0
-    defender_casualties: int = 0
+    attacker_casualties: float = 0.0
+    defender_casualties: float = 0.0
+    attacker_battalions_lost: int = 0
+    defender_battalions_lost: int = 0
     winner_tag: Optional[str] = None
     name: Optional[str] = None
+    battle_type: str = 'land'
+    status: str = 'unknown'
 
 
 @dataclass
@@ -144,12 +149,13 @@ class WarExtractor:
         return result
 
     def _fmt_date(self, raw: Any) -> Optional[str]:
-        """Convert 'YYYY.M.D' to 'YYYY-MM-DD'. Returns None for invalid/ongoing dates."""
+        """Convert 'YYYY.M.D[.H]' to 'YYYY-MM-DD'. Returns None for invalid/ongoing dates."""
         if not raw or raw == ONGOING_DATE:
             return None
         try:
             if isinstance(raw, str) and '.' in raw:
-                year, month, day = raw.split('.')
+                parts = raw.split('.')
+                year, month, day = parts[0], parts[1], parts[2]  # ignore hours if present
                 return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
             if isinstance(raw, str) and '-' in raw:
                 return raw
@@ -284,42 +290,119 @@ class WarExtractor:
 
     def _extract_battles(self, war_key: str, battles_db: Dict[str, Any],
                          id_to_tag: Dict[str, str]) -> List[Battle]:
-        """Extract battles from battle_manager.database, skipping null entries."""
+        """Extract battles belonging to this war from battle_manager.database.
+
+        Battle structure (confirmed from save inspection):
+          battle.war                           -> numeric war ID
+          battle.battle_data.attacker.country  -> numeric country ID of attacker
+          battle.battle_data.defender.country  -> numeric country ID of defender
+          battle.battle_data.attacker.statistics -> [{num_dead, num_wounded, ...}]
+          battle.status   -> 'attacker_victory' / 'defender_victory' / 'fighting'
+          battle.start_date / battle.end_date  -> date strings
+          battle.province -> province ID
+          battle.name     -> {key, variables: [{key, value}]}
+          battle.type     -> 'land' or 'naval'
+        """
+        war_id_int = None
+        try:
+            war_id_int = int(war_key)
+        except (ValueError, TypeError):
+            pass
+
         battles = []
         for battle_key, battle_data in battles_db.items():
-            # Most entries are the string "none" — skip non-dict entries
             if not isinstance(battle_data, dict):
                 continue
 
-            attacker_id = str(battle_data.get('attacker', ''))
-            defender_id = str(battle_data.get('defender', ''))
-
-            attacker_tag = id_to_tag.get(attacker_id)
-            defender_tag = id_to_tag.get(defender_id)
-
-            if not attacker_tag or not defender_tag or attacker_tag == defender_tag:
+            # Only battles belonging to this war
+            if war_id_int is not None and battle_data.get('war') != war_id_int:
                 continue
 
-            winner_id = str(battle_data.get('winner', ''))
-            winner_tag = id_to_tag.get(winner_id)
+            bd = battle_data.get('battle_data', {})
+            att_info = bd.get('attacker', {}) if isinstance(bd, dict) else {}
+            def_info = bd.get('defender', {}) if isinstance(bd, dict) else {}
 
-            loc = battle_data.get('location')
+            att_tag = id_to_tag.get(str(att_info.get('country', '')))
+            def_tag = id_to_tag.get(str(def_info.get('country', '')))
+
+            if not att_tag or not def_tag or att_tag == def_tag:
+                continue
+
+            # Casualties: sum num_dead across culture groups
+            att_dead = sum(
+                s.get('num_dead', 0) for s in att_info.get('statistics', [])
+                if isinstance(s, dict)
+            )
+            def_dead = sum(
+                s.get('num_dead', 0) for s in def_info.get('statistics', [])
+                if isinstance(s, dict)
+            )
+
+            # Battalion losses
+            att_bat_lost = max(0,
+                (battle_data.get('attacker_start_battalions') or 0) -
+                (battle_data.get('attacker_ending_battalions') or 0))
+            def_bat_lost = max(0,
+                (battle_data.get('defender_start_battalions') or 0) -
+                (battle_data.get('defender_ending_battalions') or 0))
+
+            # Winner from status
+            status = battle_data.get('status', 'unknown')
+            if status == 'attacker_victory':
+                winner_tag = att_tag
+            elif status == 'defender_victory':
+                winner_tag = def_tag
+            else:
+                winner_tag = None
+
+            # Province location
+            loc = battle_data.get('province')
             location_province_id = str(loc) if loc is not None else None
+
+            # Battle name: extract state/city from localisation key variables
+            # BATTLE_IN -> STATE_REGION_NAME variable (e.g. 'STATE_ONTARIO')
+            # BATTLE_FOR -> CITY_NAME variable (e.g. 'HUB_NAME_STATE_BASQUE_COUNTRY_wood')
+            name_data = battle_data.get('name', {})
+            battle_name = None
+            if isinstance(name_data, dict):
+                name_vars = name_data.get('variables', [])
+                for nv in name_vars:
+                    if not isinstance(nv, dict):
+                        continue
+                    if nv.get('key') == 'STATE_REGION_NAME':
+                        battle_name = nv.get('value') or None
+                        break
+                    if nv.get('key') == 'CITY_NAME':
+                        # Extract state portion: HUB_NAME_STATE_X_type -> STATE_X
+                        city_val = nv.get('value', '')
+                        parts = city_val.split('_')
+                        state_idx = next(
+                            (i for i, p in enumerate(parts) if p == 'STATE'), -1
+                        )
+                        if state_idx >= 0:
+                            battle_name = '_'.join(parts[state_idx:-1]) or city_val
+                        else:
+                            battle_name = city_val or None
+                        break
 
             battles.append(Battle(
                 battle_id=f"{war_key}_{battle_key}",
-                attacker_tag=attacker_tag,
-                defender_tag=defender_tag,
-                occurred_on=self._fmt_date(battle_data.get('date')),
+                attacker_tag=att_tag,
+                defender_tag=def_tag,
+                occurred_on=self._fmt_date(battle_data.get('start_date')),
+                ended_on=self._fmt_date(battle_data.get('end_date')),
                 location_province_id=location_province_id,
-                attacker_casualties=int(battle_data.get('attacker_casualties', 0)),
-                defender_casualties=int(battle_data.get('defender_casualties', 0)),
+                attacker_casualties=round(float(att_dead), 6),
+                defender_casualties=round(float(def_dead), 6),
+                attacker_battalions_lost=att_bat_lost,
+                defender_battalions_lost=def_bat_lost,
                 winner_tag=winner_tag,
-                name=battle_data.get('name'),
+                name=battle_name,
+                battle_type=battle_data.get('type', 'land'),
+                status=status,
             ))
 
         return battles
-
     def get_extraction_stats(self) -> Dict[str, Any]:
         """Return statistics from the last extraction run."""
         stats = self.extraction_stats.copy()

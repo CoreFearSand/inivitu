@@ -404,7 +404,7 @@ function showExportModal(dataType, options = {}) {
                                 <option value="gdp">GDP</option>
                                 <option value="population">Population</option>
                                 <option value="prestige">Prestige</option>
-                                <option value="military_size">Military Size</option>
+                                <option value="army_personnel">Army Personnel</option>
                                 <option value="literacy">Literacy</option>
                                 <option value="weekly_income">Weekly Income</option>
                             </select>

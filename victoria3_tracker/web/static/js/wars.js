@@ -8,6 +8,9 @@
 // ─── Flag URL cache (tag → {url, alt}) populated from /api/countries ─────────
 const _warFlagUrls = {};
 
+// ─── War name cache (war_db_id → generated name string) ──────────────────────
+const _warNameCache = {};
+
 // ─── Page state ──────────────────────────────────────────────────────────────
 const warsState = {
     charts: {},
@@ -71,7 +74,7 @@ async function loadCountriesForFilter() {
         const countrySelect = document.getElementById('country-select');
 
         const countries = data.countries || [];
-        countries.sort((a, b) => (a.name || a.country_tag).localeCompare(b.name || b.country_tag));
+        countries.sort((a, b) => getCountryName(a.country_tag).localeCompare(getCountryName(b.country_tag)));
 
         // Populate flag URL cache for use in war/battle rows
         countries.forEach(c => {
@@ -84,7 +87,7 @@ async function loadCountriesForFilter() {
         });
 
         countries.forEach(c => {
-            const label = `${c.name || c.country_tag} (${c.country_tag})`;
+            const label = `${getCountryName(c.country_tag)} (${c.country_tag})`;
             if (countrySelect) {
                 const opt = document.createElement('option');
                 opt.value = c.country_tag;
@@ -362,11 +365,21 @@ async function loadWarsTable() {
         const qs = new URLSearchParams(params).toString();
         const data = await apiRequest(`/api/wars?${qs}`);
 
-        // Pre-compute derived sort key and cache
-        warsState.warsData = (data.wars || []).map(w => ({
-            ...w,
-            _total_cost: (w.total_materiel_cost || 0) + (w.total_wage_cost || 0)
-        }));
+        // Pre-compute derived sort key and cache, excluding empty wars
+        // (no participants, no casualties, no cost — ghost entries from the save)
+        warsState.warsData = (data.wars || [])
+            .filter(w => (w.participant_count || 0) > 0
+                      || (w.total_casualties || 0) > 0
+                      || (w.total_materiel_cost || 0) + (w.total_wage_cost || 0) > 0)
+            .map(w => ({
+                ...w,
+                _total_cost: (w.total_materiel_cost || 0) + (w.total_wage_cost || 0)
+            }));
+
+        // Build war name cache for use by the battles table
+        warsState.warsData.forEach(w => {
+            if (w.war_db_id) _warNameCache[w.war_db_id] = generateWarName(w);
+        });
 
         // Restore sort icons if a column is already active (e.g. after filter re-apply)
         const ws = warsState.warsSort;
@@ -463,7 +476,7 @@ function createWarRow(w) {
             <td>
                 <span class="fw-bold">${warLabel}</span>
                 <br><small class="text-muted">${rawType}</small>
-                ${w.strategic_region ? `<br><small class="text-muted">📍 ${formatRegion(w.strategic_region)}</small>` : ''}
+                ${w.strategic_region ? `<br><small class="text-muted">${formatRegion(w.strategic_region)}</small>` : ''}
             </td>
             <td>${warStatusBadge(w.status)}</td>
             <td>${formatGameDate(w.started_on)}</td>
@@ -536,17 +549,18 @@ function createBattleRow(b) {
     const winner = b.winner_tag
         ? `${warFlagImg(b.winner_tag)}<span class="badge bg-success ms-1">${b.winner_tag}</span>`
         : '<span class="text-muted">—</span>';
-    const warLabel = formatWarType(b.war_type);
+    // Use the same generated name as the wars list (via cache); fall back to type label
+    const warLabel = _warNameCache[b.war_db_id] || formatWarType(b.war_type);
 
     return `
         <tr>
-            <td>${b.name || '<span class="text-muted">Unnamed</span>'}</td>
+            <td>${formatBattleName(b.name)}</td>
             <td>${formatGameDate(b.occurred_on)}</td>
             <td>${b.location_province_id || '—'}</td>
-            <td>${warFlagImg(b.attacker_tag)}<span class="badge bg-danger ms-1">${b.attacker_tag}</span> (${b.attacker_casualties || 0})</td>
-            <td>${warFlagImg(b.defender_tag)}<span class="badge bg-primary ms-1">${b.defender_tag}</span> (${b.defender_casualties || 0})</td>
+            <td>${warFlagImg(b.attacker_tag)}<span class="badge bg-danger ms-1">${b.attacker_tag}</span></td>
+            <td>${warFlagImg(b.defender_tag)}<span class="badge bg-primary ms-1">${b.defender_tag}</span></td>
             <td>${winner}</td>
-            <td class="text-end">${formatCasualties(b._total_casualties || 0)}</td>
+            <td class="text-end">${formatCasualties(b.attacker_casualties || 0)} / ${formatCasualties(b.defender_casualties || 0)}</td>
             <td><small class="text-muted">${warLabel}</small></td>
         </tr>`;
 }
@@ -582,7 +596,7 @@ async function loadTimeline() {
 function createTimelineItem(e) {
     const isStart  = e.event_type === 'war_start';
     const dotColor = isStart ? '#dc3545' : '#28a745';
-    const icon     = isStart ? '⚔️ War Began' : '🏳️ War Ended';
+    const icon     = isStart ? 'War Began' : 'War Ended';
     const warLabel = formatWarType(e.war_type);
     const cas = e.total_casualties > 0
         ? `<small class="text-muted"> · ${formatCasualties(e.total_casualties)} casualties</small>`
@@ -725,16 +739,17 @@ async function openWarModal(warDbId) {
         const defenders = data.participants?.defenders || [];
         const battles   = data.battles || [];
 
-        // Build a minimal war object for generateWarName() using participant data
-        // (detail endpoint doesn't include prestige/GP fields, so we fall back to
-        //  first attacker/defender by list order — good enough for the modal title)
+        // Build a minimal war object for generateWarName().
+        // The detail endpoint returns participants ordered by casualties DESC,
+        // so attackers[0]/defenders[0] is the most-involved participant —
+        // matching the same casualties-ordered logic used by the war list CTE.
         const nameObj = {
             war_type:          w.war_type,
             started_on:        w.started_on,
             strategic_region:  w.strategic_region,
             main_attacker_tag: attackers[0]?.country_tag || null,
             main_defender_tag: defenders[0]?.country_tag || null,
-            gp_attacker_tags:  null,   // no prestige data in detail view
+            gp_attacker_tags:  null,   // no GP aggregation in detail view
             gp_defender_tags:  null,
         };
         title.textContent = generateWarName(nameObj);
@@ -784,36 +799,34 @@ async function openWarModal(warDbId) {
 
             <div class="row">
                 <div class="col-md-6">
-                    <h6 class="text-danger">⚔️ Attackers</h6>
+                    <h6 class="text-danger">Attackers</h6>
                     ${renderParticipantList(attackers)}
                 </div>
                 <div class="col-md-6">
-                    <h6 class="text-primary">🛡️ Defenders</h6>
+                    <h6 class="text-primary">Defenders</h6>
                     ${renderParticipantList(defenders)}
                 </div>
             </div>
 
             ${battles.length > 0 ? `
             <hr>
-            <h6>Battles</h6>
+            <h6>Battles (${battles.length})</h6>
             <div class="table-responsive">
-                <table class="table table-sm table-striped">
+                <table class="table table-sm table-striped align-middle">
                     <thead>
                         <tr>
-                            <th>Name</th><th>Date</th><th>Attacker</th>
-                            <th>Defender</th><th>Winner</th><th>Casualties</th>
+                            <th>Location</th>
+                            <th>Date</th>
+                            <th>Attacker</th>
+                            <th>Defender</th>
+                            <th>Winner</th>
+                            <th class="text-end">Att. Dead</th>
+                            <th class="text-end">Def. Dead</th>
+                            <th class="text-center">Bats. Lost</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${battles.map(b => `
-                        <tr>
-                            <td>${b.name || '—'}</td>
-                            <td>${formatGameDate(b.occurred_on)}</td>
-                            <td>${b.attacker_tag} (${b.attacker_casualties || 0})</td>
-                            <td>${b.defender_tag} (${b.defender_casualties || 0})</td>
-                            <td>${b.winner_tag || '—'}</td>
-                            <td>${(b.attacker_casualties || 0) + (b.defender_casualties || 0)}</td>
-                        </tr>`).join('')}
+                        ${battles.map(b => createModalBattleRow(b, w.status)).join('')}
                     </tbody>
                 </table>
             </div>` : ''}
@@ -894,7 +907,79 @@ async function exportWarsCSV() {
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Battle row helpers ──────────────────────────────────────────────────────
+
+/**
+ * Format a battle location name from the save's localisation key.
+ * 'STATE_BASQUE_COUNTRY' -> 'Basque Country'
+ * null/undefined -> italic dash
+ */
+function formatBattleName(name) {
+    if (!name) return '<span class="text-muted fst-italic">Unknown</span>';
+    // Strip STATE_ prefix, replace underscores with spaces, title-case each word
+    const label = name
+        .replace(/^STATE_/, '')
+        .toLowerCase()
+        .split('_')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+    return label;
+}
+
+/** Build a battle row for the war detail modal.
+ * @param {object} b          - battle record
+ * @param {string} warStatus  - parent war status ('ongoing', 'ended', 'white_peace')
+ */
+function createModalBattleRow(b, warStatus) {
+    const attCas = formatCasualties(b.attacker_casualties || 0);
+    const defCas = formatCasualties(b.defender_casualties || 0);
+    const attBat = b.attacker_battalions_lost ?? 0;
+    const defBat = b.defender_battalions_lost ?? 0;
+
+    // A battle with no declared victor is "Ongoing" only if the war itself is still
+    // ongoing AND the battle status is 'fighting'. Otherwise it's a Draw.
+    const battleOngoing = b.status === 'fighting' && warStatus === 'ongoing';
+    const winnerCell = b.winner_tag
+        ? `<span class="d-flex align-items-center gap-1">
+               ${warFlagImg(b.winner_tag)}
+               <span class="badge bg-success">${getCountryName(b.winner_tag)}</span>
+           </span>`
+        : (battleOngoing
+            ? '<span class="badge bg-warning text-dark">Ongoing</span>'
+            : '<span class="badge bg-secondary">Draw</span>');
+
+    const dateRange = b.ended_on && b.ended_on !== b.occurred_on
+        ? `${formatGameDate(b.occurred_on)} – ${formatGameDate(b.ended_on)}`
+        : formatGameDate(b.occurred_on);
+
+    return `
+        <tr>
+            <td><strong>${formatBattleName(b.name)}</strong></td>
+            <td><small>${dateRange}</small></td>
+            <td>
+                <span class="d-flex align-items-center gap-1">
+                    ${warFlagImg(b.attacker_tag)}
+                    <span>${getCountryName(b.attacker_tag)}</span>
+                </span>
+            </td>
+            <td>
+                <span class="d-flex align-items-center gap-1">
+                    ${warFlagImg(b.defender_tag)}
+                    <span>${getCountryName(b.defender_tag)}</span>
+                </span>
+            </td>
+            <td>${winnerCell}</td>
+            <td class="text-end text-danger">${attCas}</td>
+            <td class="text-end text-primary">${defCas}</td>
+            <td class="text-center">
+                <span class="text-danger">${attBat}</span>
+                <span class="text-muted"> / </span>
+                <span class="text-primary">${defBat}</span>
+            </td>
+        </tr>`;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────────
 
 /**
  * Format a casualties value into human-readable form.

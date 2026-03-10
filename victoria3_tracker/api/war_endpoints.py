@@ -10,6 +10,8 @@ from flask import jsonify, request
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
+from .utils import validate_tag
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,7 +150,7 @@ class WarEndpoints:
                 'most_active_countries': [dict(r) for r in active_countries],
                 'deadliest_wars': [dict(r) for r in deadliest_wars],
                 'filters': {'playthrough_id': playthrough_id},
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
 
         # ------------------------------------------------------------------
@@ -232,7 +234,7 @@ class WarEndpoints:
                     'end_date': end_date,
                     'limit': limit
                 },
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
 
         # ------------------------------------------------------------------
@@ -250,7 +252,7 @@ class WarEndpoints:
             return jsonify({
                 'countries': countries,
                 'count': len(countries),
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
 
         # ------------------------------------------------------------------
@@ -265,8 +267,8 @@ class WarEndpoints:
             status = request.args.get('status')
             limit = min(request.args.get('limit', 50, type=int), 100)
 
-            if country_tag and len(country_tag) != 3:
-                return jsonify({'error': 'Invalid country tag: must be exactly 3 characters'}), 400
+            if country_tag:
+                country_tag = validate_tag(country_tag)
 
             wars = self.data_access.get_war_statistics(
                 country_tag=country_tag,
@@ -286,7 +288,7 @@ class WarEndpoints:
                     'status': status,
                     'limit': limit
                 },
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
 
         # ------------------------------------------------------------------
@@ -363,7 +365,7 @@ class WarEndpoints:
                     'total_war_cost': total_cost,
                     'total_battles': len(battles)
                 },
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
 
         # ------------------------------------------------------------------
@@ -378,8 +380,8 @@ class WarEndpoints:
             country_tag = request.args.get('country')
             limit = min(request.args.get('limit', 50, type=int), 100)
 
-            if country_tag and len(country_tag) != 3:
-                return jsonify({'error': 'Invalid country tag: must be exactly 3 characters'}), 400
+            if country_tag:
+                country_tag = validate_tag(country_tag)
 
             battles = self.data_access.get_battle_statistics(
                 war_db_id=war_db_id,
@@ -395,7 +397,7 @@ class WarEndpoints:
                     'country': country_tag,
                     'limit': limit
                 },
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
 
         # ------------------------------------------------------------------
@@ -405,8 +407,7 @@ class WarEndpoints:
         @_api_error_handler("Error getting country war performance")
         def get_country_war_performance(country_tag: str):
             """Get war performance statistics for a specific country."""
-            if not country_tag or len(country_tag) != 3:
-                return jsonify({'error': 'Invalid country tag: must be exactly 3 characters'}), 400
+            country_tag = validate_tag(country_tag)
 
             playthrough_id = request.args.get('playthrough_id')
 
@@ -447,9 +448,5 @@ class WarEndpoints:
                 'performance': performance,
                 'recent_wars': recent_wars,
                 'filters': {'playthrough_id': playthrough_id},
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             })
-
-    def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        return datetime.now().isoformat()

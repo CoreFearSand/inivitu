@@ -4,7 +4,6 @@ Flask REST API for Victoria 3 Game Tracker.
 Provides REST endpoints for accessing game data and statistics.
 """
 
-import hashlib
 import logging
 import csv
 import io
@@ -21,49 +20,13 @@ from .advanced_endpoints import AdvancedEndpoints
 from .war_endpoints import WarEndpoints
 from .country_endpoints import CountryEndpoints
 # WebSocket handler removed
+from .flag_utils import flag_url as _flag_url, flag_url_alt as _flag_url_alt
 
 logger = logging.getLogger(__name__)
 
 # Maximum rows the /api/countries endpoint will return in one request.
 # High enough for all realistic save files; raise in config if needed.
 MAX_COUNTRIES_PER_REQUEST = 1000
-
-# Country tags whose wiki flag filename differs from the standard Flag_{TAG}.png
-_FLAG_EXCEPTIONS: dict[str, str] = {
-    'GBR': 'GBR_uk',
-    'AWS': 'red_flag',
-    'VNZ': 'VNZ_monarchy',
-    'NPU': 'PEU',
-    'ZAI': 'YEM'
-}
-
-_WIKI_FLAG_BASE = 'https://vic3.paradoxwikis.com/images'
-
-def _flag_url(tag: str) -> str:
-    """Return the Paradox wiki direct image URL for a country flag (tag-based)."""
-    suffix = _FLAG_EXCEPTIONS.get(tag, tag)
-    filename = f'Flag_{suffix}.png'
-    md5 = hashlib.md5(filename.encode()).hexdigest()
-    return f'{_WIKI_FLAG_BASE}/{md5[0]}/{md5[:2]}/{filename}'
-
-# Country names where the wiki filename uses different capitalisation than the DB.
-# Keys are lowercased for case-insensitive matching; values are the exact wiki stem.
-_FLAG_NAME_OVERRIDES: dict[str, str] = {
-    'hesse-kassel': 'Hesse-Kassel',
-    'saxe-weimar':  'Saxe-Weimar',
-    'dar al kuti':  'Dar_al_Kuti',
-    'mecklenburg-strelitz': 'Mecklenburg-Strelitz',
-    'saxe-meiningen': 'Saxe-Meiningen',
-    'schaumburg-lippe': 'Schaumburg-Lippe'
-}
-
-def _flag_url_alt(name: str) -> str:
-    """Fallback flag URL using the country name directly (e.g. Jolof.png, Absaroka.png).
-    Checks _FLAG_NAME_OVERRIDES first for capitalisation corrections."""
-    stem = _FLAG_NAME_OVERRIDES.get(name.lower(), name.replace(' ', '_'))
-    filename = f'{stem}.png'
-    md5 = hashlib.md5(filename.encode()).hexdigest()
-    return f'{_WIKI_FLAG_BASE}/{md5[0]}/{md5[:2]}/{filename}'
 
 
 class Victoria3API:
@@ -211,7 +174,7 @@ class Victoria3API:
                 
                 return jsonify({
                     'status': 'healthy',
-                    'timestamp': self._get_current_timestamp(),
+                    'timestamp': datetime.now().isoformat(),
                     'database': {
                         'connected': 'error' not in stats,
                         'saves_count': stats.get('saves_count', 0),
@@ -998,11 +961,6 @@ class Victoria3API:
                 logger.error(f"Error exporting wars: {e}")
                 return jsonify({'error': str(e)}), 500
 
-    def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        from datetime import datetime
-        return datetime.now().isoformat()
-    
     def run(self, host: str = '127.0.0.1', port: int = None, debug: bool = False):
         """Run the Flask application.
         

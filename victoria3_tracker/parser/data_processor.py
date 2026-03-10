@@ -11,8 +11,10 @@ from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 
 from .save_parser import SaveFileParser
+from .utils import parse_game_date
 from .metrics_extractor import MetricsExtractor, CountryMetrics
 from .war_extractor import WarExtractor, WarData
+from .interest_group_extractor import InterestGroupExtractor
 from ..database import DatabaseManager, DataAccessLayer
 from ..config import ConfigManager
 
@@ -34,7 +36,8 @@ class DataProcessor:
         self.save_parser = SaveFileParser(config)
         self.metrics_extractor = MetricsExtractor()
         self.war_extractor = WarExtractor()
-        
+        self.ig_extractor = InterestGroupExtractor()
+
         # Processing statistics
         self.processing_stats = {
             'files_processed': 0,
@@ -43,6 +46,7 @@ class DataProcessor:
             'countries_processed': 0,
             'metrics_stored': 0,
             'wars_stored': 0,
+            'interest_groups_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }
@@ -177,24 +181,19 @@ class DataProcessor:
                 if raw_pid is not None:
                     logger.warning(f"Invalid playthrough_id {raw_pid!r}; falling back to save_id")
 
-            # Parse game_date for marking absent wars as ended (same logic as save metadata)
-            game_date_raw = parsed_data.get('date') or parsed_data.get('game_date', '')
-            game_date: Optional[str] = None
-            if isinstance(game_date_raw, str) and '.' in game_date_raw:
-                try:
-                    _y, _m, _d = game_date_raw.split('.')
-                    game_date = f"{_y}-{_m.zfill(2)}-{_d.zfill(2)}"
-                except ValueError:
-                    pass
-            elif isinstance(game_date_raw, str) and '-' in game_date_raw:
-                game_date = game_date_raw
+            game_date = parse_game_date(parsed_data.get('date') or parsed_data.get('game_date', ''))
 
             wars_inserted = self.data_access.insert_war_data(
                 wars_list, save_id, playthrough_id, game_date
             )
             logger.debug(f"Inserted {wars_inserted} wars")
-            
-            # Step 3.5: Log successful processing
+
+            # Step 3.5: Extract and store interest groups
+            ig_list = self.ig_extractor.extract_all_interest_groups(parsed_data)
+            ig_inserted = self.data_access.insert_interest_groups(ig_list, save_id)
+            logger.debug(f"Inserted {ig_inserted} interest groups")
+
+            # Step 3.6: Log successful processing
             self.data_access.log_processing_result(
                 filename=file_path.name,
                 status='success',
@@ -206,6 +205,7 @@ class DataProcessor:
             self.processing_stats['countries_processed'] += len(country_metrics_list)
             self.processing_stats['metrics_stored'] += metrics_inserted
             self.processing_stats['wars_stored'] += wars_inserted
+            self.processing_stats['interest_groups_stored'] += ig_inserted
             
             return True
             
@@ -226,14 +226,9 @@ class DataProcessor:
             Number of metrics inserted
         """
         try:
-            # Get game date
-            game_date = parsed_data.get("date") or parsed_data.get("game_date", "1836-01-01")
-            if isinstance(game_date, str) and '.' in game_date:
-                try:
-                    year, month, day = game_date.split('.')
-                    game_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-                except ValueError:
-                    game_date = "1836-01-01"
+            game_date = parse_game_date(
+                parsed_data.get("date") or parsed_data.get("game_date", "")
+            ) or "1836-01-01"
             
             # Get country and metric type mappings
             country_ids = self.data_access._get_country_ids(save_id)
@@ -260,7 +255,7 @@ class DataProcessor:
                     if metric_name not in metric_type_ids:
                         continue
                     
-                    if metric_value is not None and metric_value >= 0:
+                    if metric_value is not None:
                         metrics_to_insert.append((
                             country_id,
                             metric_type_ids[metric_name],
@@ -348,6 +343,7 @@ class DataProcessor:
         stats['parser_info'] = self.save_parser.get_parser_info()
         stats['extraction_stats'] = self.metrics_extractor.get_extraction_stats()
         stats['war_extraction_stats'] = self.war_extractor.get_extraction_stats()
+        stats['ig_extraction_stats'] = self.ig_extractor.get_extraction_stats()
         
         return stats
     
@@ -360,6 +356,7 @@ class DataProcessor:
             'countries_processed': 0,
             'metrics_stored': 0,
             'wars_stored': 0,
+            'interest_groups_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }
@@ -465,17 +462,25 @@ class DataProcessor:
                 'extraction_stats': self.war_extractor.get_extraction_stats(),
                 'sample_wars': [w.save_war_id for w in wars_list[:3]]
             }
-            
+
+            # Step 2.6: Extract interest groups
+            ig_list = self.ig_extractor.extract_all_interest_groups(parsed_data)
+            result['ig_result'] = {
+                'igs_found': len(ig_list),
+                'extraction_stats': self.ig_extractor.get_extraction_stats(),
+            }
+
             # Step 3: Test storage (without actually storing)
             result['storage_result'] = {
                 'would_store_countries': len(country_metrics_list),
                 'would_store_metrics': sum(
-                    len([v for v in cm.metrics.values() if v is not None]) 
+                    len([v for v in cm.metrics.values() if v is not None])
                     for cm in country_metrics_list
                 ),
                 'would_store_wars': len(wars_list),
                 'would_store_participants': sum(len(w.participants) for w in wars_list),
-                'would_store_battles': sum(len(w.battles) for w in wars_list)
+                'would_store_battles': sum(len(w.battles) for w in wars_list),
+                'would_store_interest_groups': len(ig_list),
             }
             
             result['success'] = True

@@ -6,6 +6,7 @@ Provides advanced querying, filtering, and comparative analysis endpoints.
 
 import logging
 from flask import jsonify, request, abort
+from .utils import validate_tag
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
@@ -27,7 +28,8 @@ class AdvancedEndpoints:
         
         # Register advanced routes
         self._register_advanced_routes()
-        
+        self._register_debug_routes()
+
         logger.info("Advanced API endpoints registered")
     
     def _register_advanced_routes(self):
@@ -64,7 +66,7 @@ class AdvancedEndpoints:
                     'metric_name': metric_name,
                     'countries': countries,
                     'data': comparison_data,
-                    'timestamp': self._get_current_timestamp()
+                    'timestamp': datetime.now().isoformat()
                 })
                 
             except Exception as e:
@@ -195,8 +197,7 @@ class AdvancedEndpoints:
         def get_country_summary(country_tag: str):
             """Get comprehensive summary for a country."""
             try:
-                if not country_tag or len(country_tag) != 3:
-                    abort(400)
+                country_tag = validate_tag(country_tag)
                 
                 # Get latest metrics
                 latest_metrics = self.data_access.get_latest_metrics_for_country(country_tag)
@@ -255,7 +256,7 @@ class AdvancedEndpoints:
                     'latest_metrics': latest_metrics,
                     'rankings': rankings,
                     'growth_rates': growth_rates,
-                    'timestamp': self._get_current_timestamp()
+                    'timestamp': datetime.now().isoformat()
                 })
                 
             except Exception as e:
@@ -409,13 +410,96 @@ class AdvancedEndpoints:
                     'date': date,
                     'statistics': stats,
                     'percentiles': percentiles,
-                    'timestamp': self._get_current_timestamp()
+                    'timestamp': datetime.now().isoformat()
                 })
                 
             except Exception as e:
                 logger.error(f"Error getting metric statistics: {e}")
                 return jsonify({'error': str(e)}), 500
     
-    def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        return datetime.now().isoformat()
+
+
+    def _register_debug_routes(self):
+        """Register diagnostic/debug routes — registered from __init__ as well."""
+
+        @self.app.route('/api/debug/extract-info', methods=['GET'])
+        def debug_extract_info():
+            """Return diagnostic info: what metrics and IGs were stored from the most recent save.
+
+            Query params:
+              country_tag (optional) — focus on a specific country
+            """
+            try:
+                country_tag = request.args.get('country_tag', '').upper() or None
+
+                # ── Metrics per type ────────────────────────────────────────
+                metrics_by_type = self.db_manager.execute_query("""
+                    SELECT mt.name, mt.display_name, mt.is_active,
+                           COUNT(*) AS row_count,
+                           MIN(cm.amount) AS min_val,
+                           MAX(cm.amount) AS max_val
+                    FROM CountryMetrics cm
+                    JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                    WHERE cm.save_id = (
+                        SELECT save_id FROM Saves ORDER BY saved_at DESC LIMIT 1
+                    )
+                    GROUP BY mt.name, mt.display_name, mt.is_active
+                    ORDER BY mt.name
+                """)
+
+                # ── Interest group count ─────────────────────────────────────
+                ig_total = self.db_manager.execute_query(
+                    "SELECT COUNT(*) AS cnt FROM InterestGroups"
+                )
+                ig_last_save = self.db_manager.execute_query("""
+                    SELECT COUNT(*) AS cnt FROM InterestGroups
+                    WHERE save_id = (
+                        SELECT save_id FROM Saves ORDER BY saved_at DESC LIMIT 1
+                    )
+                """)
+                ig_types = self.db_manager.execute_query("""
+                    SELECT DISTINCT ig.ig_type, COUNT(*) AS country_count
+                    FROM InterestGroups ig
+                    WHERE ig.save_id = (
+                        SELECT save_id FROM Saves ORDER BY saved_at DESC LIMIT 1
+                    )
+                    GROUP BY ig.ig_type
+                    ORDER BY country_count DESC
+                    LIMIT 20
+                """)
+
+                # ── Country-specific sample (if requested) ──────────────────
+                country_sample = None
+                if country_tag:
+                    country_sample = self.db_manager.execute_query("""
+                        SELECT mt.name, cm.amount
+                        FROM CountryMetrics cm
+                        JOIN Countries c ON cm.country_id = c.country_id
+                        JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                        WHERE c.country_tag = ?
+                          AND cm.save_id = (
+                              SELECT save_id FROM Saves ORDER BY saved_at DESC LIMIT 1
+                          )
+                        ORDER BY mt.name
+                    """, (country_tag,))
+
+                # ── Most recent save info ────────────────────────────────────
+                latest_save = self.db_manager.execute_query("""
+                    SELECT save_id, filename, in_game_date, saved_at
+                    FROM Saves ORDER BY saved_at DESC LIMIT 1
+                """)
+
+                return jsonify({
+                    'latest_save': dict(latest_save[0]) if latest_save else None,
+                    'metrics_extracted': [dict(r) for r in metrics_by_type],
+                    'interest_groups': {
+                        'total_ever': ig_total[0]['cnt'] if ig_total else 0,
+                        'in_last_save': ig_last_save[0]['cnt'] if ig_last_save else 0,
+                        'types_in_last_save': [dict(r) for r in ig_types],
+                    },
+                    'country_sample': [dict(r) for r in country_sample] if country_sample else None,
+                })
+
+            except Exception as e:
+                logger.error(f"Error in debug_extract_info: {e}")
+                return jsonify({'error': str(e)}), 500

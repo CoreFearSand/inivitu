@@ -5,8 +5,10 @@ Extracts and validates game metrics from parsed save data.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+from .utils import navigate_path
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class CountryMetrics:
     
     def has_valid_metrics(self) -> bool:
         """Check if country has any valid metrics."""
-        return any(value is not None and value >= 0 for value in self.metrics.values())
+        return any(value is not None for value in self.metrics.values())
 
 class MetricsExtractor:
     """Extracts game metrics from parsed Victoria 3 save data."""
@@ -32,15 +34,18 @@ class MetricsExtractor:
     # Define the core metrics we extract
     CORE_METRICS = {
         'gdp': 'GDP',
-        'weekly_income': 'Weekly Income', 
+        'weekly_income': 'Weekly Income',
         'money_holding': 'Treasury',
         'prestige': 'Prestige',
         'literacy': 'Literacy',
         'avgsol': 'Standard of Living',
         'population': 'Population',
-        'military_size': 'Military Size',
+        'army_personnel': 'Army Personnel',
         'culture_amount': 'Cultural Diversity',
-        'power_projection': 'Power Projection'
+        'power_projection': 'Power Projection',
+        'infamy': 'Infamy',
+        'credit': 'Credit Limit',
+        'prestige_tier': 'Prestige Tier',
     }
     
     def __init__(self):
@@ -141,12 +146,45 @@ class MetricsExtractor:
                     continue
             
             logger.info(f"Metrics extraction complete: {len(country_metrics_list)} countries with data")
-            
+
+            # Post-process: compute prestige_tier from relative prestige rankings.
+            # GP tier boundaries (Victoria 3 standard):
+            #   1-8  → Great Power (tier 1)
+            #   9-16 → Major Power  (tier 2)
+            #   17-32 → Regional Power (tier 3)
+            #   33+   → Minor Power (tier 4)
+            self._assign_prestige_tiers(country_metrics_list)
+
         except Exception as e:
             logger.error(f"Error during metrics extraction: {e}")
             raise
-        
+
         return country_metrics_list
+
+    def _assign_prestige_tiers(self, country_metrics_list: List['CountryMetrics']) -> None:
+        """Compute and assign prestige_tier for each country based on relative rank.
+
+        Args:
+            country_metrics_list: List of CountryMetrics objects (mutated in-place)
+        """
+        # Collect countries that have a valid prestige value
+        ranked = [
+            cm for cm in country_metrics_list
+            if cm.get_metric('prestige') is not None
+        ]
+        # Sort descending by prestige
+        ranked.sort(key=lambda cm: cm.get_metric('prestige') or 0.0, reverse=True)
+
+        for rank_idx, cm in enumerate(ranked, start=1):
+            if rank_idx <= 8:
+                tier = 1.0   # Great Power
+            elif rank_idx <= 16:
+                tier = 2.0   # Major Power
+            elif rank_idx <= 32:
+                tier = 3.0   # Regional Power
+            else:
+                tier = 4.0   # Minor Power
+            cm.metrics['prestige_tier'] = tier
     
     def _extract_country_metrics(self, country_tag: str, country_data: Dict[str, Any]) -> Dict[str, Optional[float]]:
         """Extract metrics for a single country.
@@ -166,15 +204,26 @@ class MetricsExtractor:
                 country_data, ['gdp', 'channels', '0', 'values']
             )
             
-            # Weekly income - get latest value from budget
-            metrics['weekly_income'] = self._extract_trend_metric(
-                country_data, ['budget', 'weekly_income']
-            )
-            
-            # Money holdings - current treasury
-            metrics['money_holding'] = self._extract_direct_metric(
-                country_data, ['budget', 'money'], float
-            )
+            # Weekly income — budget.weekly_income is a list of category values;
+            # sum all elements for total weekly income.
+            _wi_raw = self._navigate_path(country_data, ['budget', 'weekly_income'])
+            if isinstance(_wi_raw, list) and _wi_raw:
+                try:
+                    _wi = float(sum(v for v in _wi_raw if v is not None))
+                except (TypeError, ValueError):
+                    _wi = None
+            elif isinstance(_wi_raw, (int, float)):
+                _wi = float(_wi_raw)
+            else:
+                _wi = None
+            metrics['weekly_income'] = _wi
+
+            # Net treasury = budget.money − budget.principal (outstanding loans).
+            # 'principal' is only present when the country has debt.
+            _money = self._extract_direct_metric(country_data, ['budget', 'money'], float)
+            _debt  = self._extract_direct_metric(country_data, ['budget', 'principal'], float) or 0.0
+            # Store None only if there was genuinely no budget data at all
+            metrics['money_holding'] = (_money - _debt) if _money is not None else None
             
             # Prestige - get latest value from trend data
             metrics['prestige'] = self._extract_trend_metric(
@@ -194,16 +243,30 @@ class MetricsExtractor:
             # Population - sum of all strata
             metrics['population'] = self._extract_population_total(country_data)
             
-            # Military size - military workforce
-            metrics['military_size'] = self._extract_direct_metric(
+            # Army personnel - military workforce
+            metrics['army_personnel'] = self._extract_direct_metric(
                 country_data, ['pop_statistics', 'population_military_workforce'], float
             )
-            
+
             # Culture amount - number of different cultures
             metrics['culture_amount'] = self._extract_culture_count(country_data)
-            
-            # Power projection - placeholder for future implementation
-            metrics['power_projection'] = None
+
+            # Power projection - computed from military formations
+            metrics['power_projection'] = self._extract_power_projection(country_data)
+
+            # Infamy — must use explicit None check; 0.0 is a valid value
+            _infamy = self._extract_trend_metric(
+                country_data, ['infamy', 'channels', '0', 'values']
+            )
+            if _infamy is None:
+                _infamy = self._extract_direct_metric(country_data, ['infamy'], float)
+            metrics['infamy'] = _infamy
+
+            # Credit limit — stored directly as budget.credit in V3 saves.
+            metrics['credit'] = self._extract_direct_metric(country_data, ['budget', 'credit'], float)
+
+            # Prestige tier - populated after all countries are ranked (post-process step)
+            metrics['prestige_tier'] = None
             
         except Exception as e:
             logger.warning(f"Error extracting metrics for {country_tag}: {e}")
@@ -211,56 +274,25 @@ class MetricsExtractor:
         return metrics
     
     def _extract_trend_metric(self, data: Dict[str, Any], path: List[str]) -> Optional[float]:
-        """Extract the latest value from a trend/time series data structure.
-        
-        Args:
-            data: Data dictionary to search
-            path: List of keys to navigate to the values array
-            
-        Returns:
-            Latest value as float, or None if not found/invalid
-        """
+        """Return the last value from a trend (time-series list) at *path*, or None."""
+        val = navigate_path(data, path)
+        if isinstance(val, list) and val:
+            last = val[-1]
+            try:
+                return float(last) if last is not None else None
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def _extract_direct_metric(self, data: Dict[str, Any], path: List[str],
+                               value_type: type = float) -> Optional[float]:
+        """Return the scalar value at *path* as float, or None."""
+        val = navigate_path(data, path)
+        if val is None:
+            return None
         try:
-            current = data
-            for key in path:
-                if not isinstance(current, dict) or key not in current:
-                    return None
-                current = current[key]
-            
-            # Current should now be a list of values
-            if isinstance(current, list) and current:
-                latest_value = current[-1]  # Get last (most recent) value
-                return float(latest_value) if latest_value is not None else None
-            
-            return None
-            
-        except (ValueError, TypeError, KeyError):
-            return None
-    
-    def _extract_direct_metric(self, data: Dict[str, Any], path: List[str], value_type: type = float) -> Optional[float]:
-        """Extract a direct metric value from nested dictionary.
-        
-        Args:
-            data: Data dictionary to search
-            path: List of keys to navigate to the value
-            value_type: Type to convert the value to
-            
-        Returns:
-            Value as float, or None if not found/invalid
-        """
-        try:
-            current = data
-            for key in path:
-                if not isinstance(current, dict) or key not in current:
-                    return None
-                current = current[key]
-            
-            if current is not None:
-                return float(current)
-            
-            return None
-            
-        except (ValueError, TypeError, KeyError):
+            return float(val)
+        except (ValueError, TypeError):
             return None
     
     def _extract_population_total(self, country_data: Dict[str, Any]) -> Optional[float]:
@@ -308,6 +340,47 @@ class MetricsExtractor:
         except (ValueError, TypeError, KeyError):
             return None
     
+    def _extract_power_projection(self, country_data: Dict[str, Any]) -> Optional[float]:
+        """Estimate power projection from military formation combat ratings.
+
+        Victoria 3 stores formations in military_formation_manager.database.
+        Each formation entry has a 'units' list; each unit has 'offense' and
+        'defense' attributes.  Power projection ≈ Σ (offense + defense) across
+        all units of all formations belonging to this country.
+
+        Args:
+            country_data: Country data dictionary
+
+        Returns:
+            Estimated power projection as float, or None if not available
+        """
+        try:
+            formations_db = country_data.get('military_formation_manager', {}).get('database', {})
+            if not formations_db:
+                return None
+
+            total = 0.0
+            found_any = False
+
+            for _, formation in formations_db.items():
+                if not isinstance(formation, dict):
+                    continue
+                units = formation.get('units', [])
+                if not isinstance(units, list):
+                    continue
+                for unit in units:
+                    if not isinstance(unit, dict):
+                        continue
+                    offense = unit.get('offense', 0) or 0
+                    defense = unit.get('defense', 0) or 0
+                    total += float(offense) + float(defense)
+                    found_any = True
+
+            return total if found_any else None
+
+        except (ValueError, TypeError, KeyError):
+            return None
+
     def validate_metrics(self, country_metrics: CountryMetrics) -> Dict[str, Any]:
         """Validate extracted metrics for a country.
         

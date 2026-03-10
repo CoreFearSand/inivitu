@@ -6,6 +6,7 @@ Provides endpoints for country detail data including summary and metrics history
 
 import logging
 from flask import jsonify, request, abort
+from .utils import validate_tag
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,7 @@ class CountryEndpoints:
         def get_country_details(country_tag: str):
             """Get detailed information for a specific country."""
             try:
-                if not country_tag or len(country_tag) < 2:
-                    abort(400)
-
+                country_tag = validate_tag(country_tag)
                 country_tag = country_tag.upper()
 
                 # Get country info from most recent save
@@ -85,3 +84,50 @@ class CountryEndpoints:
             except Exception as e:
                 logger.error(f"Error getting country details for {country_tag}: {e}")
                 return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/countries/<country_tag>/interest_groups', methods=['GET'])
+        def get_country_interest_groups(country_tag: str):
+            """Get the latest interest group snapshot for a country.
+
+            Query params:
+              playthrough_id (optional)
+              save_id        (optional, overrides playthrough_id)
+            """
+            try:
+                country_tag = validate_tag(country_tag)
+                country_tag = country_tag.upper()
+                playthrough_id = request.args.get('playthrough_id')
+                save_id = request.args.get('save_id')
+
+                ig_list = self.data_access.get_interest_groups_for_country(
+                    country_tag=country_tag,
+                    playthrough_id=playthrough_id,
+                    save_id=save_id,
+                )
+
+                return jsonify({
+                    'country_tag': country_tag,
+                    'interest_groups': ig_list,
+                })
+
+            except Exception as e:
+                logger.error(f"Error getting interest groups for {country_tag}: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/countries/<country_tag>/interest_groups/history', methods=['GET'])
+        def get_country_ig_history(country_tag: str):
+            """Return IG clout/approval history across all saves for a country."""
+            try:
+                country_tag = validate_tag(country_tag)
+                playthrough_id = request.args.get('playthrough_id')
+
+                series = self.data_access.get_interest_groups_history(
+                    country_tag=country_tag,
+                    playthrough_id=playthrough_id,
+                )
+                return jsonify({'country_tag': country_tag, 'series': series})
+
+            except Exception as e:
+                logger.error(f"Error getting IG history for {country_tag}: {e}")
+                return jsonify({'error': str(e)}), 500
+

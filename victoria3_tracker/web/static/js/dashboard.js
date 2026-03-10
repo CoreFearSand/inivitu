@@ -262,7 +262,7 @@ function updateTrendsChart(data) {
     const datasets = [];
     const colors = [
         '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF',
-        '#FF9F40', '#FF6384', '#C9CBCF', '#4BC0C0', '#FF6384'
+        '#FF9F40', '#C9CBCF', '#E7E9ED', '#7CFC00', '#00CED1'
     ];
     
     let colorIndex = 0;
@@ -453,16 +453,15 @@ function formatFileSize(bytes) {
  */
 function getMetricIcon(metric) {
     const icons = {
-        'gdp': '💰',
-        'population': '👥',
-        'prestige': '⭐',
-        'military_size': '⚔️',
-        'literacy': '📚',
-        'weekly_income': '💵',
-        'money_holding': '🏦'
+        gdp:            '$',
+        population:     'P',
+        prestige:       '*',
+        army_personnel: 'M',
+        literacy:       'L',
+        weekly_income:  'W',
+        money_holding:  'T',
     };
-    
-    return icons[metric] || '📊';
+    return icons[metric] || '#';
 }
 
 /**

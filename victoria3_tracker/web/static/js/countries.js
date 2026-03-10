@@ -14,6 +14,27 @@ let countryState = {
     lastUpdate: null
 };
 
+// IG type → display name (module-level so chart functions can use it)
+function fmtIgType(raw) {
+    return (raw || '').replace(/^ig_/, '').replace(/_/g, ' ')
+        .replace(/\w/g, c => c.toUpperCase());
+}
+
+// Victoria 3 canonical IG colors
+const IG_COLORS = {
+    ig_landowners:        '#7B4F9E',
+    ig_rural_folk:        '#4CAF50',
+    ig_devout:            '#00BCD4',
+    ig_intelligentsia:    '#FFC107',
+    ig_armed_forces:      '#795548',
+    ig_industrialists:    '#FF8C00',
+    ig_petty_bourgeoisie: '#2196F3',
+    ig_trade_unions:      '#F44336',
+};
+function igColor(igType) { return IG_COLORS[igType] || '#888888'; }
+
+
+
 // Initialize country detail page when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     if (typeof window.countryData !== 'undefined') {
@@ -63,7 +84,9 @@ function setupEventHandlers() {
     const socialMetric = document.getElementById('social-metric-select');
     if (socialMetric) {
         socialMetric.addEventListener('change', function() {
-            loadSocialChart(this.value);
+            if (this.value === 'ig_clout') loadIgChart('clout');
+            else if (this.value === 'ig_approval') loadIgChart('approval');
+            else loadSocialChart(this.value);
         });
     }
     
@@ -85,10 +108,6 @@ function setupEventHandlers() {
     document.addEventListener('click', function(e) {
         if (e.target.matches('#refresh-data') || e.target.closest('#refresh-data')) {
             handleRefresh();
-        }
-        
-        if (e.target.matches('#export-data') || e.target.closest('#export-data')) {
-            handleExport();
         }
         
         if (e.target.matches('#compare-country') || e.target.closest('#compare-country')) {
@@ -172,7 +191,7 @@ async function loadMetricsOverview() {
  * Update metrics overview cards
  */
 function updateMetricsCards(data) {
-    const keyMetrics = ['gdp', 'population', 'prestige', 'military_size'];
+    const keyMetrics = ['gdp', 'population', 'prestige', 'army_personnel'];
     
     keyMetrics.forEach(metric => {
         const valueElement = document.getElementById(`metric-${metric}`);
@@ -412,34 +431,44 @@ function updateChart(chartType, data, metric) {
 }
 
 /**
- * Load rankings
+ * Load rankings — always shows top 5, then current country if outside top 5.
  */
 async function loadRankings(metric = 'gdp') {
     const tableBody = document.getElementById('rankings-table-body');
     if (!tableBody) return;
-    
+
     try {
         showLoading(tableBody, 'Loading rankings...');
-        
+
+        // Fetch enough rows to find the current country's actual rank
         const params = countryState.currentPlaythrough ? { playthrough_id: countryState.currentPlaythrough } : {};
+        params.limit = 1000;
         const data = await getRankings(metric, params);
-        
+
         let html = '';
         if (data.rankings && data.rankings.length > 0) {
-            const currentCountryRank = data.rankings.findIndex(country => 
-                country.country_tag === window.countryData.tag
-            );
-            
-            data.rankings.forEach((country, index) => {
-                const isCurrentCountry = country.country_tag === window.countryData.tag;
-                html += createRankingTableRow(country, index, isCurrentCountry, currentCountryRank);
+            const rankings = data.rankings;
+            const currentIdx = rankings.findIndex(c => c.country_tag === window.countryData.tag);
+
+            // Always render top 5
+            rankings.slice(0, 5).forEach((country, index) => {
+                const isCurrent = country.country_tag === window.countryData.tag;
+                html += createRankingTableRow(country, index, isCurrent);
             });
+
+            if (currentIdx >= 5) {
+                // Separator row
+                html += `<tr><td colspan="4" class="text-center text-muted py-1" style="letter-spacing:2px;">···</td></tr>`;
+                html += createRankingTableRow(rankings[currentIdx], currentIdx, true);
+            } else if (currentIdx === -1) {
+                html += `<tr><td colspan="4" class="text-center text-muted"><small>Not ranked for this metric</small></td></tr>`;
+            }
         } else {
             html = '<tr><td colspan="4" class="text-center text-muted">No rankings available</td></tr>';
         }
-        
+
         tableBody.innerHTML = html;
-        
+
     } catch (error) {
         console.error('Error loading rankings:', error);
         tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-danger">Error loading rankings</td></tr>';
@@ -447,24 +476,18 @@ async function loadRankings(metric = 'gdp') {
 }
 
 /**
- * Create ranking table row HTML
+ * Create a single ranking table row.
  */
-function createRankingTableRow(country, index, isCurrentCountry, currentCountryRank) {
-    const rank = index + 1;
-    const name = getCountryName(country.country_tag);
+function createRankingTableRow(country, index, isCurrentCountry) {
+    const rank  = index + 1;
+    const name  = getCountryName(country.country_tag);
     const value = formatNumber(country.amount);
-    
-    let difference = '-';
-    if (currentCountryRank >= 0 && currentCountryRank !== index) {
-        const currentCountryValue = country.amount; // This would need to be calculated properly
-        // For now, just show rank difference
-        const rankDiff = currentCountryRank - index;
-        difference = rankDiff > 0 ? `+${rankDiff}` : `${rankDiff}`;
-    }
-    
-    const rowClass = isCurrentCountry ? 'table-primary' : '';
-    const badgeClass = rank <= 3 ? 'bg-warning' : 'bg-secondary';
-    
+    const rowClass   = isCurrentCountry ? 'table-primary' : '';
+    const badgeClass = rank === 1 ? 'bg-warning text-dark'
+                     : rank === 2 ? 'bg-secondary'
+                     : rank === 3 ? 'bg-info text-dark'
+                     : 'bg-light text-dark';
+
     return `
         <tr class="${rowClass}">
             <td><span class="badge ${badgeClass}">${rank}</span></td>
@@ -474,7 +497,6 @@ function createRankingTableRow(country, index, isCurrentCountry, currentCountryR
                 <br><small class="text-muted">${country.country_tag}</small>
             </td>
             <td>${value}</td>
-            <td>${difference}</td>
         </tr>
     `;
 }
@@ -498,12 +520,156 @@ function handleTabChange(targetId) {
             const rankingsMetric = document.getElementById('rankings-metric-select')?.value || 'gdp';
             loadRankings(rankingsMetric);
             break;
+        case '#interest-groups-pane':
+            loadInterestGroups();
+            break;
     }
 }
 
 /**
- * Load comparison data — populates the searchable country picker
+ * Load interest groups for the current country
  */
+async function loadInterestGroups() {
+    const tableBody = document.getElementById('interest-groups-table-body');
+    if (!tableBody) return;
+
+    try {
+        tableBody.innerHTML = `<tr><td colspan="5" class="text-center">
+            <div class="spinner-border spinner-border-sm" role="status"></div> Loading…
+        </td></tr>`;
+
+        const params = {};
+        if (countryState.currentPlaythrough) params.playthrough_id = countryState.currentPlaythrough;
+
+        const url = `/api/countries/${window.countryData.tag}/interest_groups` +
+            (Object.keys(params).length ? '?' + new URLSearchParams(params) : '');
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const igs = data.interest_groups || [];
+        if (!igs.length) {
+            tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No interest group data available for this save.</td></tr>';
+            return;
+        }
+
+
+        tableBody.innerHTML = igs.map(ig => {
+            const govBadge = ig.in_government
+                ? '<span class="badge bg-success">In Government</span>'
+                : '<span class="badge bg-secondary">Opposition</span>';
+            const approvalClass = ig.approval >= 0 ? 'text-success' : 'text-danger';
+            const approvalStr = ig.approval >= 0
+                ? `+${ig.approval.toFixed(1)}`
+                : ig.approval.toFixed(1);
+            return `<tr>
+                <td><strong>${fmtIgType(ig.ig_type)}</strong><br>
+                    <small class="text-muted">${ig.ig_type}</small></td>
+                <td>${govBadge}</td>
+                <td>${ig.clout != null ? (ig.clout * 100).toFixed(1) + '%' : '–'}</td>
+                <td class="${approvalClass}">${approvalStr}</td>
+                <td>${ig.membership != null ? ig.membership.toLocaleString() : '–'}</td>
+            </tr>`;
+        }).join('');
+
+    } catch (error) {
+        console.error('Error loading interest groups:', error);
+        if (tableBody) {
+            tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Failed to load interest group data.</td></tr>';
+        }
+    }
+}
+
+/**
+ * Multi-line time-series chart of IG clout or approval across all saves.
+ * One line per interest group, each colored with its canonical in-game color.
+ */
+async function loadIgChart(field) {
+    const canvas = document.getElementById('social-chart');
+    if (!canvas) return;
+
+    try {
+        const params = {};
+        if (countryState.currentPlaythrough) params.playthrough_id = countryState.currentPlaythrough;
+        const url = `/api/countries/${window.countryData.tag}/interest_groups/history` +
+            (Object.keys(params).length ? '?' + new URLSearchParams(params) : '');
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const series = data.series || {};
+        if (!Object.keys(series).length) return;
+
+        if (countryState.charts['social']) countryState.charts['social'].destroy();
+
+        const isClout = field === 'clout';
+
+        // Build one dataset per IG type
+        const datasets = Object.entries(series).map(([igType, points]) => {
+            const color = igColor(igType);
+            return {
+                label: fmtIgType(igType),
+                data: points.map(p => ({
+                    x: p.date,
+                    y: isClout ? p.clout * 100 : p.approval
+                })),
+                borderColor: color,
+                backgroundColor: color + '22',
+                borderWidth: 2,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                tension: 0.3,
+                fill: false,
+            };
+        });
+
+        countryState.charts['social'] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            parser: 'yyyy-MM-dd',
+                            displayFormats: { year: 'yyyy', month: 'MMM yyyy' }
+                        },
+                        title: { display: false }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: isClout ? 'Political Clout (%)' : 'Approval'
+                        },
+                        ticks: {
+                            callback: v => isClout ? v.toFixed(1) + '%' : (v >= 0 ? '+' : '') + v.toFixed(1)
+                        }
+                    }
+                },
+                plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const v = ctx.raw.y;
+                                return isClout
+                                    ? `${ctx.dataset.label}: ${v.toFixed(1)}%`
+                                    : `${ctx.dataset.label}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error loading IG chart:', error);
+    }
+}
+
+
 async function loadComparisonData() {
     try {
         const data = await getCountries({ limit: 1000 });
@@ -659,10 +825,13 @@ async function runComparison() {
     }
 
     try {
+        const payload = { countries: allTags, metric, limit: 50 };
+        if (countryState.currentPlaythrough) payload.playthrough_id = countryState.currentPlaythrough;
+
         const response = await fetch('/api/compare/countries', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ countries: allTags, metric, limit: 50 })
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -751,14 +920,6 @@ function renderComparisonChart(data, metric) {
 function handleRefresh() {
     loadCountryData();
     showAlert('Data refreshed successfully', 'success', 3000);
-}
-
-/**
- * Handle export action
- */
-function handleExport() {
-    // Implement export functionality
-    showAlert('Export functionality coming soon', 'info', 3000);
 }
 
 /**

@@ -64,7 +64,7 @@ class WebSocketHandler:
                 emit('welcome', {
                     'message': 'Connected to Victoria 3 Game Tracker',
                     'client_id': client_id,
-                    'timestamp': self._get_current_timestamp(),
+                    'timestamp': datetime.now().isoformat(),
                     'stats': stats
                 })
             except Exception as e:
@@ -110,7 +110,7 @@ class WebSocketHandler:
                 
                 emit('subscribed', {
                     'type': subscription_type,
-                    'timestamp': self._get_current_timestamp()
+                    'timestamp': datetime.now().isoformat()
                 })
                 
                 logger.debug(f"Client {client_id} subscribed to {subscription_type}")
@@ -139,7 +139,7 @@ class WebSocketHandler:
                 
                 emit('unsubscribed', {
                     'type': subscription_type,
-                    'timestamp': self._get_current_timestamp()
+                    'timestamp': datetime.now().isoformat()
                 })
                 
                 logger.debug(f"Client {client_id} unsubscribed from {subscription_type}")
@@ -166,7 +166,7 @@ class WebSocketHandler:
                     'database_stats': stats,
                     'latest_save': dict(latest_save[0]) if latest_save else None,
                     'connected_clients': len(self.connected_clients),
-                    'timestamp': self._get_current_timestamp()
+                    'timestamp': datetime.now().isoformat()
                 }
                 
                 emit('status', status)
@@ -185,7 +185,7 @@ class WebSocketHandler:
             message = {
                 'type': 'new_save',
                 'data': save_data,
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             }
             
             # Broadcast to subscribers
@@ -207,7 +207,7 @@ class WebSocketHandler:
             message = {
                 'type': 'country_update',
                 'data': country_data,
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             }
             
             # Broadcast to subscribers
@@ -229,7 +229,7 @@ class WebSocketHandler:
             message = {
                 'type': 'processing_status',
                 'data': status_data,
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             }
             
             # Broadcast to subscribers
@@ -251,7 +251,7 @@ class WebSocketHandler:
             message = {
                 'type': 'metric_update',
                 'data': metric_data,
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             }
             
             # Broadcast to subscribers
@@ -279,7 +279,7 @@ class WebSocketHandler:
                 'connected_clients': len(self.connected_clients),
                 'total_subscriptions': sum(len(subs) for subs in self.client_subscriptions.values()),
                 'subscription_breakdown': subscription_counts,
-                'timestamp': self._get_current_timestamp()
+                'timestamp': datetime.now().isoformat()
             }
     
     def _get_client_id(self) -> str:
@@ -287,9 +287,6 @@ class WebSocketHandler:
         from flask import request
         return request.sid
     
-    def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        return datetime.now().isoformat()
     
     def run(self, host: str = '127.0.0.1', port: int = 8080, debug: bool = False):
         """Run the SocketIO server.

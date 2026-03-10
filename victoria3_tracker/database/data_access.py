@@ -31,7 +31,7 @@ _WAR_NAMING_CTE = """
         FROM (
             SELECT war_id, country_tag,
                    ROW_NUMBER() OVER (
-                       PARTITION BY war_id ORDER BY prestige_at_war_start DESC
+                       PARTITION BY war_id ORDER BY war_support DESC
                    ) AS rn
             FROM WarParticipants WHERE side = 'attacker'
         ) WHERE rn = 1
@@ -41,7 +41,7 @@ _WAR_NAMING_CTE = """
         FROM (
             SELECT war_id, country_tag,
                    ROW_NUMBER() OVER (
-                       PARTITION BY war_id ORDER BY prestige_at_war_start DESC
+                       PARTITION BY war_id ORDER BY war_support DESC
                    ) AS rn
             FROM WarParticipants WHERE side = 'defender'
         ) WHERE rn = 1
@@ -288,7 +288,7 @@ class DataAccessLayer:
                     if metric_name not in metric_type_ids:
                         continue
                     
-                    if amount is not None and amount >= 0:
+                    if amount is not None:
                         metrics_to_insert.append((
                             country_id,
                             metric_type_ids[metric_name],
@@ -332,12 +332,20 @@ class DataAccessLayer:
             gdp_data = country_data.get("gdp", {}).get("channels", {}).get("0", {}).get("values", [])
             metrics['gdp'] = gdp_data[-1] if gdp_data else None
             
-            # Weekly income - get latest value
-            weekly_income = country_data.get("budget", {}).get("weekly_income", [])
-            metrics['weekly_income'] = weekly_income[-1] if weekly_income else None
-            
-            # Money holdings - current treasury
-            metrics['money_holding'] = country_data.get("budget", {}).get("money", 0.0)
+            # Weekly income - try list (trend), then direct float
+            budget = country_data.get("budget", {})
+            weekly_income = budget.get("weekly_income")
+            if isinstance(weekly_income, list) and weekly_income:
+                metrics['weekly_income'] = weekly_income[-1]
+            elif isinstance(weekly_income, (int, float)):
+                metrics['weekly_income'] = float(weekly_income)
+            else:
+                metrics['weekly_income'] = budget.get("estimated_weekly_income")
+
+            # Net treasury = money in hand − outstanding debt principal
+            _money = budget.get("money") or 0.0
+            _debt  = budget.get("debt_principal") or 0.0
+            metrics['money_holding'] = float(_money) - float(_debt) if budget.get("money") is not None else None
             
             # Prestige - get latest value from trend data
             prestige_data = country_data.get("prestige", {}).get("channels", {}).get("0", {}).get("values", [])
@@ -360,16 +368,40 @@ class DataAccessLayer:
             )
             metrics['population'] = float(total_population) if total_population > 0 else None
             
-            # Military size
+            # Army personnel (formerly military_size)
             military_size = pop_stats.get("population_military_workforce", 0)
-            metrics['military_size'] = float(military_size) if military_size > 0 else None
-            
+            metrics['army_personnel'] = float(military_size) if military_size > 0 else None
+
             # Culture amount - number of different cultures
             cultures = country_data.get("cultures", [])
             metrics['culture_amount'] = float(len(cultures)) if cultures else None
-            
-            # Power projection - placeholder for future implementation
+
+            # Power projection - placeholder (computed by MetricsExtractor)
             metrics['power_projection'] = None
+
+            # Infamy — explicit None check so 0.0 is stored correctly
+            infamy_data = country_data.get("infamy")
+            if isinstance(infamy_data, dict):
+                vals = infamy_data.get("channels", {}).get("0", {}).get("values", [])
+                metrics['infamy'] = float(vals[-1]) if vals else None
+            elif infamy_data is not None:
+                try:
+                    metrics['infamy'] = float(infamy_data)
+                except (ValueError, TypeError):
+                    metrics['infamy'] = None
+            else:
+                metrics['infamy'] = None
+
+            # Credit limit — try several known paths
+            credit_val = (
+                budget.get("credit_limit")
+                or budget.get("debt_settings", {}).get("credit_limit")
+                or budget.get("max_debt")
+            )
+            metrics['credit'] = float(credit_val) if credit_val is not None else None
+
+            # Prestige tier — computed post-extraction by MetricsExtractor; skip here
+            metrics['prestige_tier'] = None
             
         except Exception as e:
             logger.warning(f"Error extracting metrics: {e}")
@@ -861,21 +893,29 @@ class DataAccessLayer:
                         for b in war.battles:
                             cursor.execute("""
                                 INSERT OR IGNORE INTO Battles
-                                    (battle_id, war_id, name, occurred_on, location_province_id,
+                                    (battle_id, war_id, name, occurred_on, ended_on,
+                                     location_province_id,
                                      attacker_tag, defender_tag,
-                                     attacker_casualties, defender_casualties, winner_tag)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     attacker_casualties, defender_casualties,
+                                     attacker_battalions_lost, defender_battalions_lost,
+                                     winner_tag, battle_type, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (
                                 b.battle_id,
                                 war_db_id,
                                 b.name,
                                 b.occurred_on,
+                                b.ended_on,
                                 b.location_province_id,
                                 b.attacker_tag,
                                 b.defender_tag,
                                 b.attacker_casualties,
                                 b.defender_casualties,
+                                b.attacker_battalions_lost,
+                                b.defender_battalions_lost,
                                 b.winner_tag,
+                                b.battle_type,
+                                b.status,
                             ))
 
                         wars_upserted += 1
@@ -921,6 +961,178 @@ class DataAccessLayer:
             logger.error(f"Failed to insert war data: {e}", exc_info=True)
             raise
     
+    def insert_interest_groups(
+        self,
+        ig_list: List[Any],
+        save_id: str,
+    ) -> int:
+        """Insert interest group data for a save.
+
+        Args:
+            ig_list: List of InterestGroupData objects from InterestGroupExtractor
+            save_id: Database save ID to associate IGs with
+
+        Returns:
+            Number of interest group rows upserted
+        """
+        try:
+            if not ig_list:
+                return 0
+
+            # Build country_tag → country_id map for this save
+            country_ids = self._get_country_ids(save_id)
+            if not country_ids:
+                logger.warning("insert_interest_groups: no countries found for save")
+                return 0
+
+            rows = []
+            for ig in ig_list:
+                country_id = country_ids.get(ig.country_tag)
+                if country_id is None:
+                    continue
+                rows.append((
+                    country_id,
+                    save_id,
+                    ig.ig_type,
+                    ig.clout,
+                    ig.approval,
+                    ig.membership,
+                    int(ig.in_government),
+                ))
+
+            if not rows:
+                return 0
+
+            inserted = self.db.execute_many("""
+                INSERT INTO InterestGroups
+                    (country_id, save_id, ig_type, clout, approval, membership, in_government)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(country_id, save_id, ig_type) DO UPDATE SET
+                    clout         = excluded.clout,
+                    approval      = excluded.approval,
+                    membership    = excluded.membership,
+                    in_government = excluded.in_government
+            """, rows)
+
+            logger.info(f"Upserted {inserted} interest groups for save {save_id}")
+            return inserted
+
+        except Exception as e:
+            logger.error(f"Failed to insert interest groups: {e}", exc_info=True)
+            return 0
+
+    def get_interest_groups_for_country(
+        self,
+        country_tag: str,
+        playthrough_id: Optional[str] = None,
+        save_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get the latest interest group snapshot for a country.
+
+        Args:
+            country_tag: 3-letter country tag
+            playthrough_id: Filter to a specific playthrough (recommended)
+            save_id: Filter to a specific save (overrides playthrough_id)
+
+        Returns:
+            List of interest group dicts sorted by clout descending
+        """
+        try:
+            if save_id:
+                results = self.db.execute_query("""
+                    SELECT ig.ig_type, ig.clout, ig.approval, ig.membership,
+                           ig.in_government
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    WHERE c.country_tag = ? AND ig.save_id = ?
+                    ORDER BY ig.clout DESC
+                """, (country_tag, save_id))
+            elif playthrough_id:
+                results = self.db.execute_query("""
+                    SELECT ig.ig_type, ig.clout, ig.approval, ig.membership,
+                           ig.in_government
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    JOIN Saves s     ON ig.save_id    = s.save_id
+                    WHERE c.country_tag = ? AND s.playthrough_id = ?
+                      AND s.in_game_date = (
+                          SELECT MAX(s2.in_game_date) FROM Saves s2
+                          WHERE s2.playthrough_id = ?
+                      )
+                    ORDER BY ig.clout DESC
+                """, (country_tag, playthrough_id, playthrough_id))
+            else:
+                results = self.db.execute_query("""
+                    SELECT ig.ig_type, ig.clout, ig.approval, ig.membership,
+                           ig.in_government
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    WHERE c.country_tag = ?
+                      AND ig.save_id = (
+                          SELECT save_id FROM Saves ORDER BY saved_at DESC LIMIT 1
+                      )
+                    ORDER BY ig.clout DESC
+                """, (country_tag,))
+
+            return [dict(row) for row in results]
+
+        except Exception as e:
+            logger.error(f"Failed to get interest groups for {country_tag}: {e}")
+            return []
+
+    def get_interest_groups_history(
+        self,
+        country_tag: str,
+        playthrough_id=None,
+    ):
+        """Return per-ig_type time series across all saves in a playthrough.
+
+        Returns:
+            Dict mapping ig_type -> list of {date, clout, approval, in_government},
+            sorted chronologically.
+        """
+        try:
+            if playthrough_id:
+                rows = self.db.execute_query("""
+                    SELECT s.in_game_date AS date,
+                           ig.ig_type,
+                           ig.clout,
+                           ig.approval,
+                           ig.in_government
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    JOIN Saves s     ON ig.save_id    = s.save_id
+                    WHERE c.country_tag = ? AND s.playthrough_id = ?
+                    ORDER BY s.in_game_date ASC
+                """, (country_tag, playthrough_id))
+            else:
+                rows = self.db.execute_query("""
+                    SELECT s.in_game_date AS date,
+                           ig.ig_type,
+                           ig.clout,
+                           ig.approval,
+                           ig.in_government
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    JOIN Saves s     ON ig.save_id    = s.save_id
+                    WHERE c.country_tag = ?
+                    ORDER BY s.in_game_date ASC
+                """, (country_tag,))
+
+            series = {}
+            for row in rows:
+                r = dict(row)
+                ig_type = r.pop('ig_type')
+                if ig_type not in series:
+                    series[ig_type] = []
+                series[ig_type].append(r)
+            return series
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to get IG history for {country_tag}: {e}")
+            return {}
+
     def get_war_statistics(self, country_tag: Optional[str] = None, playthrough_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """Get war statistics with optional filtering.
 
@@ -1059,14 +1271,20 @@ class DataAccessLayer:
                 results = self.db.execute_query("""
                     SELECT
                         b.battle_id,
+                        b.war_id         AS war_db_id,
                         b.name,
                         b.occurred_on,
+                        b.ended_on,
                         b.location_province_id,
                         b.attacker_tag,
                         b.defender_tag,
                         b.winner_tag,
                         b.attacker_casualties,
                         b.defender_casualties,
+                        b.attacker_battalions_lost,
+                        b.defender_battalions_lost,
+                        b.battle_type,
+                        b.status,
                         w.save_war_id,
                         w.war_type
                     FROM Battles b
@@ -1080,14 +1298,20 @@ class DataAccessLayer:
                 results = self.db.execute_query("""
                     SELECT
                         b.battle_id,
+                        b.war_id         AS war_db_id,
                         b.name,
                         b.occurred_on,
+                        b.ended_on,
                         b.location_province_id,
                         b.attacker_tag,
                         b.defender_tag,
                         b.winner_tag,
                         b.attacker_casualties,
                         b.defender_casualties,
+                        b.attacker_battalions_lost,
+                        b.defender_battalions_lost,
+                        b.battle_type,
+                        b.status,
                         w.save_war_id,
                         w.war_type
                     FROM Battles b
@@ -1101,14 +1325,20 @@ class DataAccessLayer:
                 results = self.db.execute_query("""
                     SELECT
                         b.battle_id,
+                        b.war_id         AS war_db_id,
                         b.name,
                         b.occurred_on,
+                        b.ended_on,
                         b.location_province_id,
                         b.attacker_tag,
                         b.defender_tag,
                         b.winner_tag,
                         b.attacker_casualties,
                         b.defender_casualties,
+                        b.attacker_battalions_lost,
+                        b.defender_battalions_lost,
+                        b.battle_type,
+                        b.status,
                         w.save_war_id,
                         w.war_type
                     FROM Battles b
