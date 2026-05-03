@@ -43,10 +43,10 @@
                 <div id="countries-container">
                     <div class="row" id="countries-grid">
                         {% for country in countries %}
-                        <div class="col-md-6 col-lg-4 mb-3 country-card" 
-                             data-name="{{ country.name|lower }}" 
+                        <div class="col-md-6 col-lg-4 mb-3 country-card"
+                             data-name="{{ country.name|lower }}"
                              data-tag="{{ country.country_tag|lower }}">
-                            <div class="card h-100 {% if country.is_player_country %}border-primary{% endif %}">
+                            <div class="card h-100 {% if country.is_global %}border-secondary border-2{% elif country.is_player_country %}border-primary{% endif %}">
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between align-items-start mb-2">
                                         <div class="d-flex align-items-center gap-2">
@@ -56,7 +56,9 @@
                                                  onerror="var a=this.dataset.alt;if(a){this.src=a;this.dataset.alt=''}else{this.style.display='none'}">
                                             <h6 class="card-title mb-0">{{ country.name or country.country_tag }}</h6>
                                         </div>
-                                        {% if country.is_player_country %}
+                                        {% if country.is_global %}
+                                        <span class="badge bg-secondary">Global</span>
+                                        {% elif country.is_player_country %}
                                         <span class="badge bg-primary">Player</span>
                                         {% endif %}
                                     </div>

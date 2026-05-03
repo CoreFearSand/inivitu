@@ -237,6 +237,17 @@ class Victoria3API:
                         'flag_url_alt': _flag_url_alt(r['name'] or r['country_tag'])
                     })
                 
+                # Prepend the virtual Global country (D99) at the top
+                countries.insert(0, {
+                    'country_tag': 'D99',
+                    'name': 'Global',
+                    'is_player_country': False,
+                    'is_global': True,
+                    'latest_date': countries[0]['latest_date'] if countries else None,
+                    'flag_url': _flag_url('D99'),
+                    'flag_url_alt': _flag_url('D99'),
+                })
+
                 return jsonify({
                     'countries': countries,
                     'count': len(countries),
@@ -269,6 +280,34 @@ class Victoria3API:
 
                 if limit > 500:
                     limit = 500
+
+                # D99 = virtual Global country: aggregate across all real countries
+                if country_tag == 'D99':
+                    latest_list = self.data_access.get_global_metrics_latest(playthrough_id)
+                    metrics_dict = {}
+                    for row in latest_list:
+                        name = row.get('metric_name', '')
+                        metrics_dict[name] = {
+                            'latest_value': row.get('amount'),
+                            'change_percent': None,
+                            'latest_date': row.get('recorded_at'),
+                            'display_name': row.get('display_name', name),
+                            'unit': row.get('unit', ''),
+                        }
+                    response = {
+                        'country_tag': 'D99',
+                        'playthrough_id': playthrough_id,
+                        'metrics': metrics_dict,
+                    }
+                    if metric_name:
+                        history_rows = self.data_access.get_global_metrics_history(
+                            metric_name, playthrough_id, limit
+                        )
+                        response['history'] = [
+                            {'date': r['in_game_date'], 'value': r['amount']}
+                            for r in history_rows
+                        ]
+                    return jsonify(response)
 
                 # Build metrics dict keyed by metric name (expected by countries.js)
                 if playthrough_id:

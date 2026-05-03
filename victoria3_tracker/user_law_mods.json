@@ -1,0 +1,9 @@
+{
+  "_readme": "Add modded or unknown laws here. The key is the law key exactly as it appears in the save file (e.g. 'law_my_mod_law'). Set 'group' to one of the known group keys (e.g. 'governance', 'distribution_of_power', 'citizenship', 'caste_hegemony', 'internal_security', 'policing', 'armed_forces', 'colonization', 'economic_system', 'taxation', 'trade_policy', 'land_reform', 'labor_relations', 'education_system', 'health_system', 'childrens_rights', 'rights_of_women', 'welfare', 'migration', 'slavery', 'labor_associations'). Optionally set 'label' for a human-readable name. Changes here take effect after restarting the app.",
+  "_example": {
+    "law_my_mod_law": {
+      "group": "governance",
+      "label": "My Mod Law"
+    }
+  }
+}

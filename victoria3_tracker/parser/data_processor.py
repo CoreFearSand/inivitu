@@ -15,6 +15,7 @@ from .utils import parse_game_date
 from .metrics_extractor import MetricsExtractor, CountryMetrics
 from .war_extractor import WarExtractor, WarData
 from .interest_group_extractor import InterestGroupExtractor
+from .law_extractor import LawExtractor
 from ..database import DatabaseManager, DataAccessLayer
 from ..config import ConfigManager
 
@@ -37,6 +38,7 @@ class DataProcessor:
         self.metrics_extractor = MetricsExtractor()
         self.war_extractor = WarExtractor()
         self.ig_extractor = InterestGroupExtractor()
+        self.law_extractor = LawExtractor()
 
         # Processing statistics
         self.processing_stats = {
@@ -47,6 +49,7 @@ class DataProcessor:
             'metrics_stored': 0,
             'wars_stored': 0,
             'interest_groups_stored': 0,
+            'laws_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }
@@ -193,7 +196,14 @@ class DataProcessor:
             ig_inserted = self.data_access.insert_interest_groups(ig_list, save_id)
             logger.debug(f"Inserted {ig_inserted} interest groups")
 
-            # Step 3.6: Log successful processing
+            # Step 3.6: Extract and store law history
+            law_changes = self.law_extractor.extract(parsed_data)
+            laws_inserted = self.data_access.insert_laws(
+                law_changes, save_id, playthrough_id
+            )
+            logger.debug(f"Stored {laws_inserted} law changes")
+
+            # Step 3.7: Log successful processing
             self.data_access.log_processing_result(
                 filename=file_path.name,
                 status='success',
@@ -206,6 +216,7 @@ class DataProcessor:
             self.processing_stats['metrics_stored'] += metrics_inserted
             self.processing_stats['wars_stored'] += wars_inserted
             self.processing_stats['interest_groups_stored'] += ig_inserted
+            self.processing_stats['laws_stored'] += laws_inserted
             
             return True
             
@@ -357,6 +368,7 @@ class DataProcessor:
             'metrics_stored': 0,
             'wars_stored': 0,
             'interest_groups_stored': 0,
+            'laws_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }

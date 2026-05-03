@@ -182,6 +182,26 @@ CREATE TABLE IF NOT EXISTS Territories (
     UNIQUE(province_id, save_id)
 );
 
+
+-- Country Laws: Historical law changes per country per playthrough
+CREATE TABLE IF NOT EXISTS CountryLaws (
+    law_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+    playthrough_id TEXT NOT NULL,
+    save_id TEXT NOT NULL,           -- first save that recorded this law change
+    law_key TEXT NOT NULL,           -- e.g. "law_monarchy"
+    law_group TEXT NOT NULL,         -- e.g. "governance"
+    law_label TEXT NOT NULL,         -- e.g. "Monarchy"
+    group_label TEXT NOT NULL,       -- e.g. "Governance"
+    group_color TEXT NOT NULL,       -- hex color for the law group
+    category TEXT NOT NULL,          -- power_structure | economy | human_rights
+    activation_date DATE,            -- YYYY-MM-DD when this law became active
+    replaced_law TEXT,               -- law_key this entry replaced, if any
+    is_active BOOLEAN DEFAULT FALSE, -- true = active at time of last observed save
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(country_tag, playthrough_id, law_key, activation_date)
+);
+
 -- Optional: Territory borders for map rendering
 CREATE TABLE IF NOT EXISTS TerritoryBorders (
     border_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,6 +232,8 @@ CREATE INDEX IF NOT EXISTS idx_processing_log_filename ON ProcessingLog(filename
 CREATE INDEX IF NOT EXISTS idx_processing_log_status ON ProcessingLog(status);
 CREATE INDEX IF NOT EXISTS idx_interest_groups_country_id ON InterestGroups(country_id);
 CREATE INDEX IF NOT EXISTS idx_interest_groups_save_id ON InterestGroups(save_id);
+CREATE INDEX IF NOT EXISTS idx_country_laws_tag_playthrough ON CountryLaws(country_tag, playthrough_id);
+CREATE INDEX IF NOT EXISTS idx_country_laws_activation_date ON CountryLaws(activation_date);
 
 -- Optional indexes for map features
 CREATE INDEX IF NOT EXISTS idx_territories_save_id ON Territories(save_id);
@@ -348,7 +370,7 @@ def verify_schema(connection: sqlite3.Connection) -> bool:
         required_tables = [
             'Saves', 'Countries', 'MetricTypes', 'CountryMetrics',
             'Wars', 'WarParticipants', 'Battles', 'ProcessingLog',
-            'Territories', 'TerritoryBorders', 'InterestGroups'
+            'Territories', 'TerritoryBorders', 'InterestGroups', 'CountryLaws'
         ]
         
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -590,9 +612,72 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     """)
     logger.info("Migration v1.3.5: 'debt' deactivated; 'money_holding' renamed to Net Treasury.")
 
+    # -----------------------------------------------------------------------
+    # v1.5.0 - CountryLaws table for law history timeline
+    # -----------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS CountryLaws (
+            law_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+            playthrough_id TEXT NOT NULL,
+            save_id TEXT NOT NULL,
+            law_key TEXT NOT NULL,
+            law_group TEXT NOT NULL,
+            law_label TEXT NOT NULL,
+            group_label TEXT NOT NULL,
+            group_color TEXT NOT NULL,
+            category TEXT NOT NULL,
+            activation_date DATE,
+            replaced_law TEXT,
+            is_active BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(country_tag, playthrough_id, law_key, activation_date)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_country_laws_tag_playthrough ON CountryLaws(country_tag, playthrough_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_country_laws_activation_date ON CountryLaws(activation_date)"
+    )
+    logger.info("Migration v1.5.0: CountryLaws table ensured.")
+
+    logger.info("Migration v1.5.0: CountryLaws table ensured.")
+
+    # -----------------------------------------------------------------------
+    # v1.5.1 - Backfill CountryLaws with corrected group/label/color/category
+    #          after law_definitions were reclassified (e.g. policing split
+    #          from internal_security, labor_associations from labor_rights, etc.)
+    # -----------------------------------------------------------------------
+    try:
+        from ..parser.law_definitions import LAW_GROUPS, LAW_TO_GROUP, LAW_LABELS
+        updated = 0
+        for law_key, group_key in LAW_TO_GROUP.items():
+            group = LAW_GROUPS[group_key]
+            cursor.execute("""
+                UPDATE CountryLaws
+                SET law_group   = ?,
+                    law_label   = ?,
+                    group_label = ?,
+                    group_color = ?,
+                    category    = ?
+                WHERE law_key = ?
+            """, (
+                group_key,
+                LAW_LABELS[law_key],
+                group['label'],
+                group['color'],
+                group['category'],
+                law_key,
+            ))
+            updated += cursor.rowcount
+        logger.info("Migration v1.5.1: backfilled %d CountryLaws rows with corrected metadata.", updated)
+    except Exception as _e:
+        logger.warning("Migration v1.5.1 backfill skipped: %s", _e)
+
     connection.commit()
 
 
 def get_schema_version() -> str:
     """Get the current schema version."""
-    return "1.3.5"
+    return "1.5.1"

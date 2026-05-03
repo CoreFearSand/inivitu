@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Instead of 4 correlated subqueries per war row (O(n²)), these CTEs scan
 # WarParticipants once each and are joined in.
 #
-# GP threshold: prestige >= 5 × global_avg  OR  >= 75 % of global_max.
+# GP threshold: prestige >= 5 x  global_avg  OR  >= 75 % of global_max.
 # ---------------------------------------------------------------------------
 
 # Placed after "WITH" — defines three CTEs used by the war list queries.
@@ -706,6 +706,200 @@ class DataAccessLayer:
             logger.error(f"Failed to get latest metrics for country playthrough: {e}")
             return []
     
+    # -----------------------------------------------------------------------
+    # Global (D99) aggregate metrics — computed in SQL, never stored
+    # -----------------------------------------------------------------------
+
+    # Metrics that are summed across countries vs. median-averaged (from CountryMetrics)
+    _GLOBAL_TOTAL_METRICS  = frozenset({'gdp', 'population', 'weekly_income', 'army_personnel'})
+    _GLOBAL_MEDIAN_METRICS = frozenset({'avgsol', 'money_holding', 'prestige', 'literacy',
+                                        'infamy', 'credit', 'prestige_tier'})
+    # Metrics averaged directly from the InterestGroups table (not CountryMetrics)
+    _GLOBAL_IG_AVG_METRICS = frozenset({'ig_avg_clout', 'ig_avg_approval'})
+
+    def get_global_metrics_latest(self, playthrough_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Aggregate all tracked metrics across every country at the latest date.
+
+        Total metrics (gdp, population, weekly_income, army_personnel) → SUM.
+        Median metrics → SQL window-function median per timestamp.
+        Nothing is written to the database.
+        """
+        if playthrough_id:
+            playthrough_filter = "AND s.playthrough_id = ?"
+            latest_date_subq   = "SELECT MAX(s2.in_game_date) FROM Saves s2 WHERE s2.playthrough_id = ?"
+            # params layout: metric_name, playthrough_id (for subq), playthrough_id (for filter)
+            def _params(metric_name):
+                return (metric_name, playthrough_id, playthrough_id)
+        else:
+            playthrough_filter = ""
+            latest_date_subq   = "SELECT MAX(in_game_date) FROM Saves"
+            def _params(metric_name):
+                return (metric_name,)
+
+        result = []
+        for metric_name in self._GLOBAL_TOTAL_METRICS | self._GLOBAL_MEDIAN_METRICS:
+            is_total = metric_name in self._GLOBAL_TOTAL_METRICS
+            try:
+                if is_total:
+                    rows = self.db.execute_query(f"""
+                        SELECT mt.display_name, mt.unit, SUM(cm.amount) AS amount
+                        FROM CountryMetrics cm
+                        JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                        JOIN Saves s        ON cm.save_id         = s.save_id
+                        WHERE mt.name = ?
+                          AND s.in_game_date = ({latest_date_subq})
+                          {playthrough_filter}
+                        GROUP BY mt.display_name, mt.unit
+                    """, _params(metric_name))
+                else:
+                    # SQLite median via window functions (requires SQLite ≥ 3.25)
+                    rows = self.db.execute_query(f"""
+                        SELECT display_name, unit, AVG(amount) AS amount
+                        FROM (
+                            SELECT cm.amount,
+                                   mt.display_name, mt.unit,
+                                   ROW_NUMBER() OVER (ORDER BY cm.amount) AS rn,
+                                   COUNT(*)      OVER ()                  AS cnt
+                            FROM CountryMetrics cm
+                            JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                            JOIN Saves s        ON cm.save_id         = s.save_id
+                            WHERE mt.name = ?
+                              AND s.in_game_date = ({latest_date_subq})
+                              {playthrough_filter}
+                        )
+                        WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+                        GROUP BY display_name, unit
+                    """, _params(metric_name))
+
+                if rows:
+                    r = dict(rows[0])
+                    result.append({
+                        'metric_name': metric_name,
+                        'display_name': r.get('display_name', metric_name),
+                        'unit': r.get('unit', ''),
+                        'amount': r.get('amount'),
+                        'recorded_at': None,
+                    })
+            except Exception as e:
+                logger.warning(f"Global metrics (latest) skipped {metric_name}: {e}")
+
+        # IG average metrics (clout + approval) — sourced from InterestGroups table
+        ig_col_map = {'ig_avg_clout': ('clout', 'Avg IG Clout', '%'),
+                      'ig_avg_approval': ('approval', 'Avg IG Approval', '%')}
+        if playthrough_id:
+            ig_date_subq   = "SELECT MAX(s2.in_game_date) FROM Saves s2 WHERE s2.playthrough_id = ?"
+            ig_pt_filter   = "AND s.playthrough_id = ?"
+            def _ig_params(col):
+                return (playthrough_id, playthrough_id)
+        else:
+            ig_date_subq   = "SELECT MAX(in_game_date) FROM Saves"
+            ig_pt_filter   = ""
+            def _ig_params(col):
+                return ()
+
+        for metric_name, (col, display_name, unit) in ig_col_map.items():
+            try:
+                rows = self.db.execute_query(f"""
+                    SELECT AVG(ig.{col}) AS amount
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    JOIN Saves s     ON ig.save_id    = s.save_id
+                    WHERE s.in_game_date = ({ig_date_subq})
+                      {ig_pt_filter}
+                """, _ig_params(col))
+                if rows:
+                    r = dict(rows[0])
+                    if r.get('amount') is not None:
+                        result.append({
+                            'metric_name': metric_name,
+                            'display_name': display_name,
+                            'unit': unit,
+                            'amount': r['amount'],
+                            'recorded_at': None,
+                        })
+            except Exception as e:
+                logger.warning(f"Global metrics (latest) skipped {metric_name}: {e}")
+
+        return result
+
+    def get_global_metrics_history(self, metric_name: str,
+                                    playthrough_id: Optional[str] = None,
+                                    limit: int = 100) -> List[Dict[str, Any]]:
+        """Time-series of the global aggregate for one metric, one row per save date.
+
+        Returns [{'in_game_date': ..., 'amount': ...}] sorted ASC.
+        Nothing is written to the database.
+        """
+        all_tracked = self._GLOBAL_TOTAL_METRICS | self._GLOBAL_MEDIAN_METRICS | self._GLOBAL_IG_AVG_METRICS
+        if metric_name not in all_tracked:
+            return []
+
+        # IG average metrics have their own table — handle before the CountryMetrics path
+        if metric_name in self._GLOBAL_IG_AVG_METRICS:
+            col = 'clout' if metric_name == 'ig_avg_clout' else 'approval'
+            pt_filter = "WHERE s.playthrough_id = ?" if playthrough_id else ""
+            params = (*((playthrough_id,) if playthrough_id else ()), limit)
+            try:
+                rows = self.db.execute_query(f"""
+                    SELECT s.in_game_date, AVG(ig.{col}) AS amount
+                    FROM InterestGroups ig
+                    JOIN Countries c ON ig.country_id = c.country_id
+                    JOIN Saves s     ON ig.save_id    = s.save_id
+                    {pt_filter}
+                    GROUP BY s.in_game_date
+                    ORDER BY s.in_game_date ASC
+                    LIMIT ?
+                """, params)
+                return [{'in_game_date': dict(r)['in_game_date'],
+                         'amount': dict(r)['amount']} for r in rows]
+            except Exception as e:
+                logger.error(f"Failed to get global IG metrics history for {metric_name}: {e}")
+                return []
+
+        is_total = metric_name in self._GLOBAL_TOTAL_METRICS
+        playthrough_filter = "AND s.playthrough_id = ?" if playthrough_id else ""
+        params = (metric_name, *((playthrough_id,) if playthrough_id else ()), limit)
+
+        try:
+            if is_total:
+                rows = self.db.execute_query(f"""
+                    SELECT s.in_game_date, SUM(cm.amount) AS amount
+                    FROM CountryMetrics cm
+                    JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                    JOIN Saves s        ON cm.save_id         = s.save_id
+                    WHERE mt.name = ? {playthrough_filter}
+                    GROUP BY s.in_game_date
+                    ORDER BY s.in_game_date ASC
+                    LIMIT ?
+                """, params)
+            else:
+                # Median per date via window functions
+                rows = self.db.execute_query(f"""
+                    SELECT in_game_date, AVG(amount) AS amount
+                    FROM (
+                        SELECT s.in_game_date, cm.amount,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY s.in_game_date ORDER BY cm.amount
+                               ) AS rn,
+                               COUNT(*) OVER (PARTITION BY s.in_game_date) AS cnt
+                        FROM CountryMetrics cm
+                        JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
+                        JOIN Saves s        ON cm.save_id         = s.save_id
+                        WHERE mt.name = ? {playthrough_filter}
+                    )
+                    WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+                    GROUP BY in_game_date
+                    ORDER BY in_game_date ASC
+                    LIMIT ?
+                """, params)
+
+            return [{'in_game_date': dict(r)['in_game_date'],
+                     'amount': dict(r)['amount']} for r in rows]
+
+        except Exception as e:
+            logger.error(f"Failed to get global metrics history for {metric_name}: {e}")
+            return []
+
     def get_processed_saves(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get list of processed save files.
         
@@ -1021,6 +1215,103 @@ class DataAccessLayer:
             logger.error(f"Failed to insert interest groups: {e}", exc_info=True)
             return 0
 
+    def insert_laws(
+        self,
+        law_changes: List[Any],
+        save_id: str,
+        playthrough_id: str,
+    ) -> int:
+        """Insert or ignore law change history for a save.
+
+        Uses INSERT OR IGNORE so re-processing the same save file is safe -
+        once a law change is recorded for (country_tag, playthrough_id, law_key,
+        activation_date) it is never overwritten.
+
+        Args:
+            law_changes: List of LawChange objects from LawExtractor
+            save_id: Database save ID for provenance tracking
+            playthrough_id: Playthrough identifier
+
+        Returns:
+            Number of rows inserted (0 if all already existed)
+        """
+        try:
+            if not law_changes:
+                return 0
+
+            rows = [
+                (
+                    c.country_tag,
+                    playthrough_id,
+                    save_id,
+                    c.law_key,
+                    c.law_group,
+                    c.law_label,
+                    c.group_label,
+                    c.group_color,
+                    c.category,
+                    c.activation_date,
+                    c.replaced_law,
+                    int(c.is_active),
+                )
+                for c in law_changes
+            ]
+
+            inserted = self.db.execute_many("""
+                INSERT OR IGNORE INTO CountryLaws
+                    (country_tag, playthrough_id, save_id, law_key, law_group,
+                     law_label, group_label, group_color, category,
+                     activation_date, replaced_law, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+
+            logger.info(f"Inserted {inserted} law changes for playthrough {playthrough_id}")
+            return inserted
+
+        except Exception as e:
+            logger.error(f"Failed to insert law changes: {e}", exc_info=True)
+            return 0
+
+    def get_law_history(
+        self,
+        country_tag: str,
+        playthrough_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return all law changes for a country, sorted chronologically.
+
+        Args:
+            country_tag: 3-letter country tag
+            playthrough_id: Filter to a specific playthrough (recommended)
+
+        Returns:
+            List of law change dicts sorted by activation_date ASC
+        """
+        try:
+            if playthrough_id:
+                rows = self.db.execute_query("""
+                    SELECT law_key, law_group, law_label, group_label,
+                           group_color, category, activation_date,
+                           replaced_law, is_active
+                    FROM CountryLaws
+                    WHERE country_tag = ? AND playthrough_id = ?
+                    ORDER BY activation_date ASC, law_group ASC
+                """, (country_tag, playthrough_id))
+            else:
+                rows = self.db.execute_query("""
+                    SELECT law_key, law_group, law_label, group_label,
+                           group_color, category, activation_date,
+                           replaced_law, is_active
+                    FROM CountryLaws
+                    WHERE country_tag = ?
+                    ORDER BY activation_date ASC, law_group ASC
+                """, (country_tag,))
+
+            return [dict(r) for r in rows]
+
+        except Exception as e:
+            logger.error(f"Failed to get law history for {country_tag}: {e}")
+            return []
+
     def get_interest_groups_for_country(
         self,
         country_tag: str,
@@ -1131,6 +1422,46 @@ class DataAccessLayer:
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to get IG history for {country_tag}: {e}")
+            return {}
+
+    def get_global_ig_history(self, playthrough_id=None):
+        """Return per-ig_type time series averaged across ALL countries, one row per (date, ig_type).
+
+        Returns the same dict structure as get_interest_groups_history:
+            {ig_type: [{date, clout, approval, in_government}, ...]}
+        where clout/approval are the mean across every country that has that IG at that date.
+        in_government is True when more than half of countries have that IG in government.
+        """
+        try:
+            pt_filter = "AND s.playthrough_id = ?" if playthrough_id else ""
+            params = (playthrough_id,) if playthrough_id else ()
+            rows = self.db.execute_query(f"""
+                SELECT s.in_game_date                      AS date,
+                       ig.ig_type,
+                       AVG(ig.clout)                       AS clout,
+                       AVG(ig.approval)                    AS approval,
+                       AVG(CAST(ig.in_government AS REAL)) AS in_gov_ratio
+                FROM InterestGroups ig
+                JOIN Countries c ON ig.country_id = c.country_id
+                JOIN Saves s     ON ig.save_id    = s.save_id
+                WHERE 1=1 {pt_filter}
+                GROUP BY s.in_game_date, ig.ig_type
+                ORDER BY s.in_game_date ASC
+            """, params)
+
+            series = {}
+            for row in rows:
+                r = dict(row)
+                ig_type = r.pop('ig_type')
+                in_gov_ratio = r.pop('in_gov_ratio', 0) or 0
+                r['in_government'] = in_gov_ratio >= 0.5
+                if ig_type not in series:
+                    series[ig_type] = []
+                series[ig_type].append(r)
+            return series
+
+        except Exception as e:
+            logger.error(f"Failed to get global IG history: {e}")
             return {}
 
     def get_war_statistics(self, country_tag: Optional[str] = None, playthrough_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:

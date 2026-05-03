@@ -206,7 +206,7 @@ class MetricsExtractor:
             
             # Weekly income — budget.weekly_income is a list of category values;
             # sum all elements for total weekly income.
-            _wi_raw = self._navigate_path(country_data, ['budget', 'weekly_income'])
+            _wi_raw = navigate_path(country_data, ['budget', 'weekly_income'])
             if isinstance(_wi_raw, list) and _wi_raw:
                 try:
                     _wi = float(sum(v for v in _wi_raw if v is not None))

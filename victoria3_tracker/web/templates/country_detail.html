@@ -69,6 +69,23 @@
         border-radius: 8px;
         padding: 1rem;
     }
+    /* Law Timeline */
+    .law-timeline-wrap { position: relative; padding: 2.5rem 0 0.5rem; }
+    .law-timeline-track { height: 6px; background: #dee2e6; border-radius: 3px; position: relative; }
+    .law-markers-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+    .law-marker { position: absolute; transform: translateX(-50%); bottom: 100%; display: flex; flex-direction: column; align-items: center; cursor: pointer; padding-bottom: 3px; }
+    .law-marker:hover .law-marker-stack { transform: scale(1.2); }
+    .law-marker-stack { display: flex; flex-direction: column-reverse; align-items: center; gap: 2px; transition: transform 0.1s; }
+    .law-marker-dot { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.7); box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+    .law-marker-count { font-size: 9px; font-weight: 700; color: white; width: 14px; height: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 1.5px solid rgba(255,255,255,0.7); }
+    .law-timeline-scrubber { width: 100%; margin-top: 2px; cursor: pointer; accent-color: #007bff; }
+    .law-state-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1.25rem; margin-top: 1rem; }
+    @media (max-width: 768px) { .law-state-grid { grid-template-columns: 1fr; } }
+    .law-category-header { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #555; border-bottom: 2px solid #eee; padding-bottom: 6px; margin-bottom: 8px; }
+    .law-entries { display: flex; flex-direction: column; gap: 5px; }
+    .law-entry { display: flex; flex-direction: column; gap: 2px; }
+    .law-group-label { font-size: 0.7rem; color: #888; line-height: 1; }
+    .law-badge { display: inline-block; font-size: 0.78rem; font-weight: 500; padding: 2px 9px; border-radius: 12px; border: 1px solid; white-space: nowrap; }
 </style>
 {% endblock %}
 
@@ -260,6 +277,11 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="interest-groups-tab" data-bs-toggle="tab" data-bs-target="#interest-groups-pane" type="button" role="tab">
                     <i class="fas fa-users"></i> Interest Groups
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="laws-tab" data-bs-toggle="tab" data-bs-target="#laws-pane" type="button" role="tab">
+                    <i class="fas fa-scroll"></i> Laws
                 </button>
             </li>
         </ul>
@@ -458,6 +480,17 @@
                     </div>
                 </div>
             </div>
+            <!-- Laws Timeline Tab -->
+            <div class="tab-pane fade" id="laws-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-body" id="laws-timeline-container">
+                        <div class="text-center text-muted py-5">
+                            <i class="fas fa-scroll fa-2x mb-3"></i>
+                            <p>Select the <strong>Laws</strong> tab to load the timeline.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -470,8 +503,10 @@
         tag: '{{ country_tag }}',
         name: '{{ country.country_info.name or country_tag }}',
         isPlayer: {{ 'true' if country.country_info.is_player_country else 'false' }},
+        isGlobal: {{ 'true' if country.country_info.get('is_global') else 'false' }},
         latestDate: '{{ country.country_info.in_game_date or "" }}'
     };
 </script>
+<script src="{{ url_for('static', filename='js/law_definitions.js') }}"></script>
 <script src="{{ url_for('static', filename='js/countries.js') }}"></script>
 {% endblock %}

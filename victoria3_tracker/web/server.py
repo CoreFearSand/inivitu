@@ -348,6 +348,24 @@ class WebServer:
         """)
 
         countries = []
+
+        # Prepend the virtual Global entry at the top
+        latest_date_row = self.db_manager.execute_query(
+            "SELECT MAX(in_game_date) as d FROM Saves", ()
+        )
+        latest_date = dict(latest_date_row[0])['d'] if latest_date_row else None
+        countries.append({
+            'country_tag': 'D99',
+            'name': 'Global',
+            'database_name': 'Global',
+            'is_player_country': False,
+            'is_global': True,
+            'latest_date': latest_date,
+            'save_count': 0,
+            'flag_url': _flag_url('D99'),
+            'flag_url_alt': _flag_url('D99'),
+        })
+
         for row in results:
             # Use CSV mapping for display name, fallback to database name or tag
             display_name = self.get_country_display_name(row['country_tag'])
@@ -359,6 +377,7 @@ class WebServer:
                 'name': display_name,
                 'database_name': row['name'],
                 'is_player_country': bool(row['is_player_country']),
+                'is_global': False,
                 'latest_date': row['latest_date'],
                 'save_count': row['save_count'],
                 'flag_url': _flag_url(row['country_tag']),
@@ -372,6 +391,24 @@ class WebServer:
         try:
             from ..database import DataAccessLayer
             data_access = DataAccessLayer(self.db_manager)
+
+            # D99 = virtual Global aggregate country
+            if country_tag.upper() == 'D99':
+                latest_row = self.db_manager.execute_query(
+                    "SELECT MAX(in_game_date) as in_game_date FROM Saves", ()
+                )
+                latest_date = dict(latest_row[0])['in_game_date'] if latest_row else None
+                latest_metrics = data_access.get_global_metrics_latest()
+                return {
+                    'country_tag': 'D99',
+                    'country_info': {
+                        'name': 'Global',
+                        'is_player_country': False,
+                        'is_global': True,
+                        'in_game_date': latest_date,
+                    },
+                    'latest_metrics': latest_metrics,
+                }
 
             # Get country info first — return None only if country doesn't exist
             country_info = self.db_manager.execute_query("""

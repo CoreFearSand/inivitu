@@ -8,6 +8,11 @@ import hashlib
 
 _WIKI_FLAG_BASE = 'https://vic3.paradoxwikis.com/images'
 
+# Tags that bypass the wiki CDN entirely and use a direct URL.
+_DIRECT_FLAG_URLS: dict[str, str] = {
+    'D99': 'https://www.flagdb.com/_next/image?url=https%3A%2F%2Fapi.flagdb.com%2Fflag%2Funited-nations&w=640&q=75',
+}
+
 # Country tags whose wiki flag filename differs from the standard Flag_{TAG}.png
 _FLAG_EXCEPTIONS: dict[str, str] = {
     'GBR': 'GBR_uk',
@@ -38,7 +43,12 @@ def _wiki_url(filename: str) -> str:
 
 
 def flag_url(tag: str) -> str:
-    """Return the wiki image URL for a country flag identified by its 3-letter tag."""
+    """Return the image URL for a country flag identified by its tag.
+
+    Tags in _DIRECT_FLAG_URLS bypass the wiki CDN entirely.
+    """
+    if tag in _DIRECT_FLAG_URLS:
+        return _DIRECT_FLAG_URLS[tag]
     suffix = _FLAG_EXCEPTIONS.get(tag, tag)
     return _wiki_url(f'Flag_{suffix}.png')
 

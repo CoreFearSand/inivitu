@@ -49,13 +49,21 @@ document.addEventListener('DOMContentLoaded', function() {
  */
 function initializeCountryDetail() {
     console.log('Initializing Country Detail for:', window.countryData.tag);
-    
+
+    // Hide tabs that don't apply to the Global (D99) aggregate country
+    if (window.countryData.isGlobal) {
+        ['interest-groups-tab', 'laws-tab'].forEach(function(id) {
+            const el = document.getElementById(id);
+            if (el) el.closest('li, .nav-item') ? el.closest('li, .nav-item').style.display = 'none' : el.style.display = 'none';
+        });
+    }
+
     // Setup chart configurations
     setupChartDefaults();
-    
+
     // Initialize tooltips
     initializeTooltips();
-    
+
     // Load playthrough options
     loadPlaythroughOptions();
 }
@@ -240,6 +248,7 @@ async function loadMetricsTable() {
         let html = '';
         if (data.metrics && Object.keys(data.metrics).length > 0) {
             Object.entries(data.metrics).forEach(([metric, metricData]) => {
+                if (metric.startsWith('ig_')) return;   // IG aggregates shown elsewhere
                 html += createMetricTableRow(metric, metricData);
             });
         } else {
@@ -362,9 +371,10 @@ function updateChart(chartType, data, metric) {
             });
         });
     }
-    
-    const metricName = metric.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    
+
+    const _METRIC_LABELS = { ig_avg_clout: 'Avg IG Clout', ig_avg_approval: 'Avg IG Approval' };
+    const metricName = _METRIC_LABELS[metric] || metric.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
     countryState.charts[chartType] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -522,6 +532,9 @@ function handleTabChange(targetId) {
             break;
         case '#interest-groups-pane':
             loadInterestGroups();
+            break;
+        case '#laws-pane':
+            loadLawsTimeline();
             break;
     }
 }
@@ -981,3 +994,263 @@ window.loadRankings = loadRankings;
 window.loadPlaythroughOptions = loadPlaythroughOptions;
 window.runComparison = runComparison;
 window.renderComparisonChart = renderComparisonChart;
+
+// ── Law Timeline ──────────────────────────────────────────────────────────
+
+/** State for the law timeline — reset when playthrough changes. */
+let _lawState = {
+    loaded: false,
+    changes: [],      // all LawChange dicts from API
+    byDate: {},       // date -> [LawChange]
+    sortedDates: [],  // sorted unique activation dates
+    startNum: 0,      // ms timestamp of first change
+    endNum: 0,        // ms timestamp of last change
+    steps: 1000,      // range input max
+    currentDate: null,
+    playthrough: null,
+};
+
+/**
+ * Load law history from the API and render the timeline.
+ * Called when the Laws tab becomes active.
+ */
+async function loadLawsTimeline() {
+    const container = document.getElementById('laws-timeline-container');
+    if (!container) return;
+
+    // Reset on playthrough change
+    if (_lawState.loaded && _lawState.playthrough !== countryState.currentPlaythrough) {
+        _lawState.loaded = false;
+    }
+    if (_lawState.loaded) return;   // already rendered
+
+    container.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Loading law history...</p>
+        </div>`;
+
+    try {
+        const params = {};
+        if (countryState.currentPlaythrough) params.playthrough_id = countryState.currentPlaythrough;
+        const url = '/api/countries/' + window.countryData.tag + '/laws/history' +
+            (Object.keys(params).length ? '?' + new URLSearchParams(params) : '');
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+
+        const changes = data.changes || [];
+        if (!changes.length) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-5">
+                    <i class="fas fa-scroll fa-2x mb-3"></i>
+                    <p>No law history found for this country.</p>
+                </div>`;
+            return;
+        }
+
+        // Re-derive group/label/color/category from live JS definitions so stale
+        // DB values (from before a law was reclassified) never corrupt the display.
+        if (typeof LAW_TO_GROUP !== 'undefined') {
+            changes.forEach(function(c) {
+                const liveGroup = LAW_TO_GROUP[c.law_key];
+                if (liveGroup && LAW_GROUPS[liveGroup]) {
+                    const def = LAW_GROUPS[liveGroup];
+                    c.law_group   = liveGroup;
+                    c.group_label = def.label;
+                    c.group_color = def.color;
+                    c.category    = def.category;
+                }
+                if (LAW_LABELS[c.law_key]) {
+                    c.law_label = LAW_LABELS[c.law_key];
+                }
+            });
+        }
+
+        // Build lookup structures
+        const byDate = {};
+        changes.forEach(function(c) {
+            if (!c.activation_date) return;
+            if (!byDate[c.activation_date]) byDate[c.activation_date] = [];
+            byDate[c.activation_date].push(c);
+        });
+        const sortedDates = Object.keys(byDate).sort();
+
+        function toMs(d) { return new Date(d).getTime(); }
+        const startNum = toMs(sortedDates[0]);
+        const endNum   = toMs(sortedDates[sortedDates.length - 1]);
+
+        _lawState = {
+            loaded: true,
+            playthrough: countryState.currentPlaythrough,
+            changes: changes,
+            unknownLawKeys: data.unknown_law_keys || [],
+            byDate: byDate,
+            sortedDates: sortedDates,
+            startNum: startNum,
+            endNum: endNum,
+            steps: 1000,
+            currentDate: sortedDates[sortedDates.length - 1],
+        };
+
+        _renderLawTimeline(container);
+
+    } catch (err) {
+        console.error('Error loading laws:', err);
+        container.innerHTML = `
+            <div class="text-center text-danger py-4">
+                <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                <p>Failed to load law history.</p>
+            </div>`;
+    }
+}
+
+/** Build and insert the timeline HTML, then wire the scrubber. */
+function _renderLawTimeline(container) {
+    const byDate = _lawState.byDate;
+    const sortedDates = _lawState.sortedDates;
+    const startNum = _lawState.startNum;
+    const endNum = _lawState.endNum;
+    const steps = _lawState.steps;
+    const currentDate = _lawState.currentDate;
+    const totalMs = endNum - startNum;
+    const startDate = sortedDates[0];
+    const endDate   = sortedDates[sortedDates.length - 1];
+
+    // Build marker HTML (one column per unique date)
+    const markersHtml = sortedDates.map(function(d) {
+        const list = byDate[d];
+        const pct  = totalMs > 0 ? ((new Date(d).getTime() - startNum) / totalMs * 100) : 0;
+
+        const MAX_DOTS = 5;
+        let dotsHtml;
+        if (list.length <= MAX_DOTS) {
+            dotsHtml = list.map(function(c) {
+                return '<div class="law-marker-dot" style="background:' + c.group_color + '" title="' + c.group_label + ': ' + c.law_label + '"></div>';
+            }).join('');
+        } else {
+            const color = list[0].group_color;
+            dotsHtml = '<div class="law-marker-count" style="background:' + color + '">' + list.length + '</div>';
+        }
+
+        const tooltipText = list.map(function(c) { return c.group_label + ': ' + c.law_label; }).join('&#10;');
+        return '<div class="law-marker" style="left:' + pct.toFixed(2) + '%" title="' + d + '&#10;' + tooltipText + '" data-date="' + d + '"><div class="law-marker-stack">' + dotsHtml + '</div></div>';
+    }).join('');
+
+    const currentMs = new Date(currentDate).getTime();
+    const initialVal = totalMs > 0 ? Math.round((currentMs - startNum) / totalMs * steps) : steps;
+
+    // Unknown mod-law banner
+    const unknownKeys = _lawState.unknownLawKeys || [];
+    const unknownBannerHtml = unknownKeys.length
+        ? '<div class="alert alert-warning d-flex gap-2 align-items-start mb-3" role="alert">' +
+          '<i class="fas fa-puzzle-piece mt-1 flex-shrink-0"></i>' +
+          '<div>' +
+          '<strong>Unknown mod law' + (unknownKeys.length > 1 ? 's' : '') + ' detected</strong><br>' +
+          'The following law ' + (unknownKeys.length > 1 ? 'keys are' : 'key is') + ' not in the built-in definitions:<br>' +
+          '<code>' + unknownKeys.join('</code>, <code>') + '</code><br>' +
+          '<small class="text-muted">To map ' + (unknownKeys.length > 1 ? 'them' : 'it') + ' to the correct group, add ' +
+          (unknownKeys.length > 1 ? 'entries' : 'an entry') + ' to <code>victoria3_tracker/user_law_mods.json</code> and restart the app.</small>' +
+          '</div></div>'
+        : '';
+
+    container.innerHTML =
+        unknownBannerHtml +
+        '<div class="mb-3">' +
+        '<div class="d-flex justify-content-between align-items-center mb-1">' +
+        '<small class="text-muted">' + startDate + '</small>' +
+        '<span class="badge bg-primary fs-6" id="law-current-date">' + currentDate + '</span>' +
+        '<small class="text-muted">' + endDate + '</small>' +
+        '</div>' +
+        '<div class="law-timeline-wrap">' +
+        '<div class="law-timeline-track"><div class="law-markers-layer">' + markersHtml + '</div></div>' +
+        '<input type="range" class="law-timeline-scrubber form-range" id="law-scrubber" min="0" max="' + steps + '" value="' + initialVal + '" step="1">' +
+        '</div></div>' +
+        '<hr class="my-2">' +
+        '<div id="law-state-panel"></div>';
+
+    document.getElementById('law-scrubber').addEventListener('input', function() {
+        const frac = parseInt(this.value, 10) / steps;
+        const ms   = startNum + frac * totalMs;
+        const snapDate = _snapDate(ms);
+        _lawState.currentDate = snapDate;
+        document.getElementById('law-current-date').textContent = snapDate;
+        _renderLawState();
+    });
+
+    _renderLawState();
+}
+
+/**
+ * Find the closest date in sortedDates that is <= the given timestamp.
+ */
+function _snapDate(ms) {
+    const sortedDates = _lawState.sortedDates;
+    if (!sortedDates.length) return new Date(ms).toISOString().slice(0, 10);
+    let best = sortedDates[0];
+    for (let i = 0; i < sortedDates.length; i++) {
+        const d = sortedDates[i];
+        if (new Date(d).getTime() <= ms) best = d;
+        else break;
+    }
+    return best;
+}
+
+/**
+ * Render the law-state panel showing the active law per group at
+ * _lawState.currentDate.
+ */
+function _renderLawState() {
+    const panel = document.getElementById('law-state-panel');
+    if (!panel) return;
+
+    const changes = _lawState.changes;
+    const currentDate = _lawState.currentDate;
+
+    // For each law group, find the most recent entry with activation_date <= currentDate.
+    // Changes were already normalised against live LAW_GROUPS in loadLawsTimeline,
+    // so c.law_group is always the current canonical group key.
+    const activeByGroup = {};
+    changes.forEach(function(c) {
+        if (!c.activation_date || c.activation_date > currentDate) return;
+        const existing = activeByGroup[c.law_group];
+        if (!existing || c.activation_date > existing.activation_date) {
+            activeByGroup[c.law_group] = c;
+        }
+    });
+
+    // Organise into categories in canonical LAW_GROUPS order
+    const CATEGORY_ORDER = ['power_structure', 'economy', 'human_rights'];
+    const catData = {
+        power_structure: { label: 'Power Structure', icon: 'fa-landmark',      groups: [] },
+        economy:         { label: 'Economy',          icon: 'fa-industry',      groups: [] },
+        human_rights:    { label: 'Human Rights',     icon: 'fa-balance-scale', groups: [] },
+    };
+
+    for (const groupKey of Object.keys(LAW_GROUPS)) {
+        const law = activeByGroup[groupKey];
+        if (!law) continue;
+        if (catData[law.category]) catData[law.category].groups.push(law);
+    }
+
+    let catHtml = '';
+    CATEGORY_ORDER.forEach(function(catKey) {
+        const cat = catData[catKey];
+        if (!cat.groups.length) return;
+        let groupHtml = '';
+        cat.groups.forEach(function(g) {
+            groupHtml += '<div class="law-entry">' +
+                '<span class="law-group-label">' + g.group_label + '</span>' +
+                '<span class="law-badge" style="background:' + g.group_color + '1A;border-color:' + g.group_color + ';color:' + g.group_color + '" title="' + g.law_key + '">' + g.law_label + '</span>' +
+                '</div>';
+        });
+        catHtml += '<div>' +
+            '<div class="law-category-header"><i class="fas ' + cat.icon + '"></i> ' + cat.label + '</div>' +
+            '<div class="law-entries">' + groupHtml + '</div>' +
+            '</div>';
+    });
+
+    panel.innerHTML = catHtml
+        ? '<div class="law-state-grid">' + catHtml + '</div>'
+        : '<p class="text-muted text-center">No laws recorded before ' + currentDate + '.</p>';
+}
