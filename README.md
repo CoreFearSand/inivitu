@@ -87,6 +87,8 @@ The `config.json` file contains all application settings:
 - **Political**: Prestige, culture diversity
 - **Military**: Military workforce size
 - **Wars**: Wars and war related data
+- **IG**: tracks both clout and Aproval
+- **Global**: depending on the stat stracks a SUM or AVG of the stat
 
 ## Troubleshooting
 
