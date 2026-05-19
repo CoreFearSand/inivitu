@@ -90,7 +90,6 @@
 {% endblock %}
 
 {% block content %}
-<!-- Country Header -->
 <div class="country-header">
     <div class="container-fluid">
         <div class="row align-items-center">
@@ -125,7 +124,6 @@
     </div>
 </div>
 
-<!-- Action Buttons -->
 <div class="row mb-4">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center">
@@ -143,6 +141,9 @@
                 <button type="button" class="btn btn-outline-secondary" id="export-data">
                     <i class="fas fa-download"></i> Export
                 </button>
+                <button type="button" class="btn btn-outline-success" id="export-html-btn">
+                    <i class="fas fa-file-code"></i> Export HTML
+                </button>
                 <button type="button" class="btn btn-outline-info" id="compare-country">
                     <i class="fas fa-balance-scale"></i> Compare
                 </button>
@@ -151,7 +152,6 @@
     </div>
 </div>
 
-<!-- Key Metrics Overview -->
 <div class="row mb-4" id="metrics-overview">
     <div class="col-md-3">
         <div class="card metric-card text-center">
@@ -191,7 +191,6 @@
     </div>
 </div>
 
-<!-- Charts Row -->
 <div class="row mb-4">
     <div class="col-md-6">
         <div class="card">
@@ -250,7 +249,6 @@
     </div>
 </div>
 
-<!-- Detailed Metrics Tabs -->
 <div class="row">
     <div class="col-12">
         <ul class="nav nav-tabs" id="country-tabs" role="tablist">
@@ -287,7 +285,6 @@
         </ul>
         
         <div class="tab-content" id="country-tab-content">
-            <!-- All Metrics Tab -->
             <div class="tab-pane fade show active" id="metrics-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-body">
@@ -317,7 +314,6 @@
                 </div>
             </div>
             
-            <!-- Historical Data Tab -->
             <div class="tab-pane fade" id="history-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-header">
@@ -351,7 +347,6 @@
                 </div>
             </div>
             
-            <!-- Comparison Tab -->
             <div class="tab-pane fade" id="comparison-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-header">
@@ -404,7 +399,6 @@
                 </div>
             </div>
             
-            <!-- Rankings Tab -->
             <div class="tab-pane fade" id="rankings-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-header">
@@ -453,7 +447,6 @@
                     </div>
                 </div>
             </div>
-            <!-- Interest Groups Tab -->
             <div class="tab-pane fade" id="interest-groups-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-body">
@@ -480,7 +473,6 @@
                     </div>
                 </div>
             </div>
-            <!-- Laws Timeline Tab -->
             <div class="tab-pane fade" id="laws-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-body" id="laws-timeline-container">
@@ -494,11 +486,44 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="exportHtmlModal" tabindex="-1" aria-labelledby="exportHtmlModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exportHtmlModalLabel">
+                    <i class="fas fa-file-code me-2 text-success"></i>Export Country as HTML
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Download a self-contained HTML file with all charts and data for
+                    <strong id="export-html-country-name"></strong>.
+                    The file works completely offline — no server needed.
+                    Share it with other players so they can view their country's stats.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label" for="export-html-playthrough">Playthrough</label>
+                    <select class="form-select" id="export-html-playthrough">
+                        <option value="">Loading playthroughs…</option>
+                    </select>
+                </div>
+                <div id="export-html-status" class="small text-muted" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="do-export-html-btn" disabled>
+                    <i class="fas fa-download me-1"></i>Download HTML
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-    // Pass country data to JavaScript
     window.countryData = {
         tag: '{{ country_tag }}',
         name: '{{ country.country_info.name or country_tag }}',
@@ -509,4 +534,99 @@
 </script>
 <script src="{{ url_for('static', filename='js/law_definitions.js') }}"></script>
 <script src="{{ url_for('static', filename='js/countries.js') }}"></script>
+<script>
+(function () {
+    'use strict';
+
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    const exportHtmlBtn    = document.getElementById('export-html-btn');
+    const doExportHtmlBtn  = document.getElementById('do-export-html-btn');
+    const ptSelect         = document.getElementById('export-html-playthrough');
+    const statusDiv        = document.getElementById('export-html-status');
+    const countryNameEl    = document.getElementById('export-html-country-name');
+    const modalEl          = document.getElementById('exportHtmlModal');
+
+    if (!exportHtmlBtn || !modalEl) return;
+
+    function setStatus(msg, isError) {
+        statusDiv.style.display = msg ? '' : 'none';
+        statusDiv.className = 'small ' + (isError ? 'text-danger' : 'text-muted');
+        statusDiv.textContent = msg;
+    }
+
+    exportHtmlBtn.addEventListener('click', function () {
+        if (countryNameEl) {
+            countryNameEl.textContent = window.countryData.name || window.countryData.tag;
+        }
+
+        doExportHtmlBtn.disabled = true;
+        setStatus('');
+        ptSelect.innerHTML = '<option value="">Loading playthroughs…</option>';
+
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+
+        fetch('/api/playthroughs')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var pts = (data && data.playthroughs) || [];
+                if (pts.length === 0) {
+                    ptSelect.innerHTML = '<option value="">No playthroughs found</option>';
+                    return;
+                }
+                ptSelect.innerHTML = pts.map(function (pt) {
+                    return '<option value="' + escHtml(pt.playthrough_id) + '">'
+                        + escHtml(pt.name) + '</option>';
+                }).join('');
+
+                var activePt = (document.getElementById('playthrough-select') || {}).value;
+                if (activePt) {
+                    ptSelect.value = activePt;
+                }
+
+                doExportHtmlBtn.disabled = ptSelect.value === '';
+            })
+            .catch(function () {
+                ptSelect.innerHTML = '<option value="">Failed to load playthroughs</option>';
+                setStatus('Could not load playthroughs from the server.', true);
+            });
+    });
+
+    ptSelect.addEventListener('change', function () {
+        doExportHtmlBtn.disabled = !ptSelect.value;
+        setStatus('');
+    });
+
+    doExportHtmlBtn.addEventListener('click', function () {
+        var pt = ptSelect.value;
+        if (!pt) {
+            setStatus('Please select a playthrough first.', true);
+            return;
+        }
+        var tag = window.countryData.tag;
+        setStatus('Generating export — this may take a few seconds…', false);
+        doExportHtmlBtn.disabled = true;
+
+        var url = '/api/export/country-html/' + encodeURIComponent(tag)
+                  + '?playthrough_id=' + encodeURIComponent(pt);
+
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = tag + '_' + pt.slice(0, 8) + '.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        setTimeout(function () {
+            doExportHtmlBtn.disabled = false;
+            setStatus('');
+            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        }, 2500);
+    });
+}());
+</script>
 {% endblock %}

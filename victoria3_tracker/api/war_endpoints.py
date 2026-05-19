@@ -59,9 +59,6 @@ class WarEndpoints:
         so Flask resolves them correctly.
         """
 
-        # ------------------------------------------------------------------
-        # GET /api/wars/statistics  — overall summary
-        # ------------------------------------------------------------------
         @self.app.route('/api/wars/statistics', methods=['GET'])
         @_api_error_handler("Error getting war statistics summary")
         def get_war_statistics_summary():
@@ -75,7 +72,6 @@ class WarEndpoints:
 
             where = _build_where(conditions)
 
-            # Overall war counts + totals
             war_stats = self.db_manager.execute_query(f"""
                 SELECT
                     COUNT(DISTINCT w.id)                                              AS total_wars,
@@ -90,7 +86,6 @@ class WarEndpoints:
                 {where}
             """, params)
 
-            # Battle-level stats
             battle_stats = self.db_manager.execute_query(f"""
                 SELECT
                     COUNT(*)                                                         AS total_battles,
@@ -101,7 +96,6 @@ class WarEndpoints:
                 {where}
             """, params)
 
-            # Most active countries (with best available display name)
             active_countries = self.db_manager.execute_query(f"""
                 SELECT
                     wp.country_tag,
@@ -124,7 +118,6 @@ class WarEndpoints:
                 LIMIT 10
             """, params)
 
-            # Deadliest wars
             deadliest_wars = self.db_manager.execute_query(f"""
                 SELECT
                     w.id                                              AS war_db_id,
@@ -153,9 +146,6 @@ class WarEndpoints:
                 'timestamp': datetime.now().isoformat()
             })
 
-        # ------------------------------------------------------------------
-        # GET /api/wars/timeline  — chronological war events
-        # ------------------------------------------------------------------
         @self.app.route('/api/wars/timeline', methods=['GET'])
         @_api_error_handler("Error getting war timeline")
         def get_war_timeline():
@@ -165,7 +155,6 @@ class WarEndpoints:
             end_date = request.args.get('end_date')
             limit = min(request.args.get('limit', 100, type=int), 200)
 
-            # Conditions for the "war_start" half (filter on started_on)
             start_conds, start_params = [], []
             if playthrough_id:
                 start_conds.append("w.playthrough_id = ?")
@@ -179,7 +168,6 @@ class WarEndpoints:
 
             start_where = _build_where(start_conds)
 
-            # Conditions for the "war_end" half (always has at least ended_on IS NOT NULL)
             end_conds, end_params = ["w.ended_on IS NOT NULL"], []
             if playthrough_id:
                 end_conds.append("w.playthrough_id = ?")
@@ -237,10 +225,6 @@ class WarEndpoints:
                 'timestamp': datetime.now().isoformat()
             })
 
-        # ------------------------------------------------------------------
-        # GET /api/wars/participant-countries — countries involved in wars
-        # Must be registered BEFORE /api/wars/<int:war_db_id>
-        # ------------------------------------------------------------------
         @self.app.route('/api/wars/participant-countries', methods=['GET'])
         @_api_error_handler("Error getting war participant countries")
         def get_war_participant_countries():
@@ -255,9 +239,6 @@ class WarEndpoints:
                 'timestamp': datetime.now().isoformat()
             })
 
-        # ------------------------------------------------------------------
-        # GET /api/wars  — list of wars
-        # ------------------------------------------------------------------
         @self.app.route('/api/wars', methods=['GET'])
         @_api_error_handler("Error getting wars")
         def get_wars():
@@ -291,10 +272,6 @@ class WarEndpoints:
                 'timestamp': datetime.now().isoformat()
             })
 
-        # ------------------------------------------------------------------
-        # GET /api/wars/<int:war_db_id>  — single war detail
-        # Uses Wars.id (autoincrement PK) — always unique.
-        # ------------------------------------------------------------------
         @self.app.route('/api/wars/<int:war_db_id>', methods=['GET'])
         @_api_error_handler("Error getting war details")
         def get_war_details(war_db_id: int):
@@ -343,7 +320,6 @@ class WarEndpoints:
             attackers = [p for p in participants if p['side'] == 'attacker']
             defenders = [p for p in participants if p['side'] == 'defender']
 
-            # Battles for this war
             battles = self.data_access.get_battle_statistics(war_db_id=war_db_id)
 
             total_casualties = sum((p.get('casualties') or 0) for p in participants)
@@ -368,9 +344,6 @@ class WarEndpoints:
                 'timestamp': datetime.now().isoformat()
             })
 
-        # ------------------------------------------------------------------
-        # GET /api/battles  — list of battles
-        # ------------------------------------------------------------------
         @self.app.route('/api/battles', methods=['GET'])
         @_api_error_handler("Error getting battles")
         def get_battles():
@@ -400,9 +373,6 @@ class WarEndpoints:
                 'timestamp': datetime.now().isoformat()
             })
 
-        # ------------------------------------------------------------------
-        # GET /api/countries/<country_tag>/war-performance
-        # ------------------------------------------------------------------
         @self.app.route('/api/countries/<country_tag>/war-performance', methods=['GET'])
         @_api_error_handler("Error getting country war performance")
         def get_country_war_performance(country_tag: str):
@@ -419,7 +389,6 @@ class WarEndpoints:
             if not performance:
                 return jsonify({'error': f'No war data found for country {country_tag}'}), 404
 
-            # Derived metrics
             total_casualties     = performance.get('total_casualties') or 0
             casualties_inflicted = performance.get('casualties_inflicted') or 0
             total_wars           = performance.get('total_wars') or 0

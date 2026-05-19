@@ -2,7 +2,6 @@
 endblock %} {% block content %}
 
 <div class="row">
-  <!-- Statistics Cards -->
   <div class="col-12 mb-4">
     <div class="row" id="stats-cards">
       <div class="col-md-3 mb-3">
@@ -73,7 +72,6 @@ endblock %} {% block content %}
 </div>
 
 <div class="row">
-  <!-- Recent Activity -->
   <div class="col-lg-6 mb-4">
     <div class="card">
       <div
@@ -95,13 +93,11 @@ endblock %} {% block content %}
           </div>
         </div>
         <div id="recent-saves-list" style="display: none">
-          <!-- Recent saves will be populated here -->
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Top Countries -->
   <div class="col-lg-6 mb-4">
     <div class="card">
       <div
@@ -132,7 +128,6 @@ endblock %} {% block content %}
           </div>
         </div>
         <div id="top-countries-list" style="display: none">
-          <!-- Top countries will be populated here -->
         </div>
       </div>
     </div>
@@ -140,7 +135,6 @@ endblock %} {% block content %}
 </div>
 
 <div class="row">
-  <!-- Metric Trends Chart -->
   <div class="col-12 mb-4">
     <div class="card">
       <div
@@ -206,12 +200,9 @@ endblock %} {% block content %}
 
 {% endblock %} {% block extra_scripts %}
 <script>
-  // Dashboard-specific JavaScript
   document.addEventListener("DOMContentLoaded", function () {
-    // Initialize dashboard
     initializeDashboard();
 
-    // Setup metric selector change handler
     document
       .getElementById("ranking-metric")
       .addEventListener("change", function () {
@@ -234,7 +225,6 @@ endblock %} {% block content %}
     document
       .getElementById("playthrough-selector")
       .addEventListener("change", function () {
-        // Reload all data when playthrough changes
         const metric = document.getElementById("ranking-metric").value;
         const trendMetric = document.getElementById("trend-metric").value;
         loadTopCountries(metric);
@@ -244,7 +234,7 @@ endblock %} {% block content %}
 
   let trendsChart = null;
 
-  let configCountryCount = 10; // Default value
+  let configCountryCount = 10;
 
   function getCountryCount() {
     return Math.max(1, Math.min(50, configCountryCount)); // Clamp between 1 and 50
@@ -453,7 +443,6 @@ endblock %} {% block content %}
     );
 
     if (playthroughId) {
-      // Use playthrough-specific endpoint
       const params = new URLSearchParams({
         metric: metric,
         limit: "200",
@@ -467,7 +456,6 @@ endblock %} {% block content %}
         .then((data) => {
           console.log("API response received:", data);
 
-          // Make sure canvas is visible
           const canvas = document.getElementById("trends-chart");
           if (canvas) {
             canvas.style.display = "block";
@@ -480,13 +468,11 @@ endblock %} {% block content %}
           showAlert("Error loading trend data: " + error.message, "danger");
         });
     } else {
-      // No playthrough selected, show message
       if (trendsChart) {
         trendsChart.destroy();
         trendsChart = null;
       }
 
-      // Show placeholder message
       const canvas = document.getElementById("trends-chart");
       const container = canvas.parentElement;
       container.innerHTML =
@@ -510,14 +496,11 @@ endblock %} {% block content %}
       trendsChart = null;
     }
 
-    // Completely recreate the canvas to prevent size accumulation
     const oldChartContainer = canvas.parentElement;
     const cardBody = oldChartContainer.parentElement;
 
-    // Clear the entire card body to remove any placeholder text
     cardBody.innerHTML = "";
 
-    // Create new chart container and canvas
     const newChartContainer = document.createElement("div");
     newChartContainer.className = "chart-container";
     newChartContainer.style.cssText =
@@ -531,7 +514,6 @@ endblock %} {% block content %}
     newChartContainer.appendChild(newCanvas);
     cardBody.appendChild(newChartContainer);
 
-    // Update references
     const ctx = newCanvas.getContext("2d");
 
     const datasets = [];
@@ -588,9 +570,7 @@ endblock %} {% block content %}
       "#FF6384",
     ];
 
-    // Handle different data formats
     if (data.trends) {
-      // Old format from /api/trends endpoint - limit to top N
       console.log("Using OLD format (data.trends)");
       console.log(
         "Total countries in trends:",
@@ -602,13 +582,12 @@ endblock %} {% block content %}
             countryData.data && countryData.data.length > 0
         )
         .map(([countryTag, countryData]) => {
-          // Get latest value for ranking
           const latestValue =
             countryData.data[countryData.data.length - 1].value;
           return [countryTag, countryData, latestValue];
         })
-        .sort((a, b) => b[2] - a[2]) // Sort by latest value descending
-        .slice(0, getCountryCountFromInput()); // Take top N countries
+        .sort((a, b) => b[2] - a[2])
+        .slice(0, getCountryCountFromInput());
 
       console.log(
         "OLD format showing",
@@ -633,13 +612,11 @@ endblock %} {% block content %}
         colorIndex++;
       }
     } else if (data.metrics) {
-      // New format from /api/playthroughs/{id}/metrics endpoint
       console.log("Using NEW format (data.metrics)");
       console.log("Raw metrics received:", data.metrics.length);
 
       const countryData = {};
 
-      // Group metrics by country
       data.metrics.forEach((metric, index) => {
         if (index < 10) {
           console.log(
@@ -671,21 +648,18 @@ endblock %} {% block content %}
         Object.keys(countryData).length
       );
 
-      // Create datasets - limit to top N countries by latest value
       console.log("Total countries in data:", Object.keys(countryData).length);
       console.log("Requesting top", getCountryCount(), "countries");
 
       const countryEntries = Object.entries(countryData)
         .filter(([countryTag, countryInfo]) => countryInfo.data.length > 0)
         .map(([countryTag, countryInfo]) => {
-          // Sort data by date
           countryInfo.data.sort((a, b) => new Date(a.x) - new Date(b.x));
-          // Get latest value for ranking
           const latestValue = countryInfo.data[countryInfo.data.length - 1].y;
           return [countryTag, countryInfo, latestValue];
         })
-        .sort((a, b) => b[2] - a[2]) // Sort by latest value descending
-        .slice(0, getCountryCountFromInput()); // Take top N countries
+        .sort((a, b) => b[2] - a[2])
+        .slice(0, getCountryCountFromInput());
 
       console.log(
         "Showing",
@@ -708,7 +682,6 @@ endblock %} {% block content %}
       }
     }
 
-    // Calculate maximum value across all datasets
     let maxValue = 0;
     datasets.forEach((dataset) => {
       dataset.data.forEach((point) => {
@@ -718,7 +691,6 @@ endblock %} {% block content %}
       });
     });
 
-    // Round up based on metric type
     let roundedMax;
     const metricName = (data.metric_name || metric || "").toLowerCase();
 
@@ -727,29 +699,24 @@ endblock %} {% block content %}
       metricName.includes("army") ||
       metricName.includes("navy")
     ) {
-      // Military size: round up to nearest 10,000 (tens of thousands)
       roundedMax = Math.ceil(maxValue / 10000) * 10000;
     } else if (
       metricName.includes("prestige") ||
       metricName.includes("power_projection")
     ) {
-      // Prestige & Power Projection: round up to nearest 1000
       roundedMax = Math.ceil(maxValue / 1000) * 1000;
     } else if (
       metricName.includes("literacy") ||
       metricName.includes("avgsol")
     ) {
-      // Percentage values: round up to nearest 10
       roundedMax = Math.ceil(maxValue / 10) * 10;
     } else if (metricName.includes("culture_amount")) {
-      // Culture count: round up to nearest 10
       roundedMax = Math.ceil(maxValue / 10) * 10;
     } else if (
       metricName.includes("gdp") ||
       metricName.includes("money_holding") ||
       metricName.includes("weekly_income")
     ) {
-      // Economic values: round up to nearest million for large values
       if (maxValue > 10000000) {
         roundedMax = Math.ceil(maxValue / 10000000) * 10000000;
       } else if (maxValue > 1000000) {
@@ -760,16 +727,12 @@ endblock %} {% block content %}
         roundedMax = Math.ceil(maxValue / 10000) * 10000;
       }
     } else if (maxValue > 1000000) {
-      // Large values (> 1M): round up to nearest million
       roundedMax = Math.ceil(maxValue / 1000000) * 1000000;
     } else if (maxValue > 10000) {
-      // Medium values (> 10K): round up to nearest 10,000
       roundedMax = Math.ceil(maxValue / 10000) * 10000;
     } else if (maxValue > 1000) {
-      // Small values (> 1K): round up to nearest 1,000
       roundedMax = Math.ceil(maxValue / 1000) * 1000;
     } else {
-      // Very small values: round up to nearest 100
       roundedMax = Math.ceil(maxValue / 100) * 100;
     }
 
@@ -819,7 +782,6 @@ endblock %} {% block content %}
               },
               ticks: {
                 callback: function (value) {
-                  // For literacy (percentage), show as percentage
                   if (metricName.includes("literacy")) {
                     return (value * 100).toFixed(1) + "%";
                   }
@@ -861,7 +823,6 @@ endblock %} {% block content %}
 
   function refreshTrends() {
     const metric = document.getElementById("trend-metric").value;
-    // Reload config settings to get latest country count
     loadConfigSettings().then(() => {
       loadTrends(metric);
     });

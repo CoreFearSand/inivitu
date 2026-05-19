@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 # GP threshold: prestige >= 5 x  global_avg  OR  >= 75 % of global_max.
 # ---------------------------------------------------------------------------
 
-# Placed after "WITH" — defines three CTEs used by the war list queries.
 _WAR_NAMING_CTE = """
     _main_att AS (
         SELECT war_id, country_tag AS main_attacker_tag
@@ -61,14 +60,12 @@ _WAR_NAMING_CTE = """
         GROUP BY wp2.war_id
     )"""
 
-# SELECT columns that reference the CTE results — drop-in for _WAR_NAMING_COLS.
 _WAR_NAMING_COLS = """
     _main_att.main_attacker_tag,
     _main_def.main_defender_tag,
     _gp_agg.gp_attacker_tags,
     _gp_agg.gp_defender_tags"""
 
-# JOIN clause to attach the three CTEs to the main war query.
 _WAR_NAMING_JOINS = """
     LEFT JOIN _main_att ON _main_att.war_id = w.id
     LEFT JOIN _main_def ON _main_def.war_id = w.id
@@ -104,7 +101,6 @@ class DataAccessLayer:
             ValueError: If required data is missing or invalid
             sqlite3.Error: If database operation fails
         """
-        # Extract and validate required fields
         playthrough_id = save_data.get("playthrough_id")
         if not playthrough_id:
             raise ValueError("Missing playthrough_id in save data")
@@ -117,7 +113,6 @@ class DataAccessLayer:
         import uuid
         save_id = str(uuid.uuid4())
         
-        # Convert game date to proper format if needed
         if isinstance(game_date, str):
             try:
                 # Assume format like "1836.1.1"
@@ -125,24 +120,21 @@ class DataAccessLayer:
                 game_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
             except ValueError:
                 logger.warning(f"Could not parse game date: {game_date}")
-                game_date = "1836-01-01"  # Default fallback
+                game_date = "1836-01-01"
         
-        # Get current timestamp for saved_at
         saved_at = datetime.now().isoformat()
-        
-        # Convert file timestamp if provided
+
+
         file_timestamp_str = None
         if file_timestamp:
             file_timestamp_str = datetime.fromtimestamp(file_timestamp).isoformat()
         
-        # Extract player country if available
         player_country = save_data.get("player_country", "")
-        
-        # Validate filename
+
+
         if not filename.endswith('.v3'):
             raise ValueError(f"Invalid filename format: {filename}")
         
-        # Validate file size
         if file_size <= 0:
             raise ValueError(f"Invalid file size: {file_size}")
         
@@ -178,28 +170,23 @@ class DataAccessLayer:
                 logger.warning("No country data found in save")
                 return 0
             
-            # Determine player country
             player_country = save_data.get("meta_data", {}).get("name", "")
             
             countries_to_insert = []
             for country_id, country_info in countries_data.items():
-                # Skip if country_info is not a dictionary
                 if not isinstance(country_info, dict):
                     logger.warning(f"Invalid country data for ID {country_id}: {type(country_info)}")
                     continue
                 
-                # Get the actual country tag from the "definition" field
                 country_tag = country_info.get("definition")
                 if not country_tag:
                     logger.warning(f"No definition field found for country ID {country_id}")
                     continue
                 
-                # Validate country tag (should be 3 characters)
                 if not isinstance(country_tag, str) or len(country_tag) != 3:
                     logger.warning(f"Invalid country tag: {country_tag}")
                     continue
                 
-                # Get country name (try various fields)
                 country_name = (
                     country_info.get("name") or 
                     country_info.get("localized_name") or 
@@ -207,7 +194,6 @@ class DataAccessLayer:
                     country_tag
                 )
                 
-                # Check if this is the player country
                 is_player = (country_tag == player_country)
                 
                 countries_to_insert.append((
@@ -221,7 +207,6 @@ class DataAccessLayer:
                 logger.warning("No valid countries to insert")
                 return 0
             
-            # Batch insert countries
             inserted_count = self.db.execute_many("""
                 INSERT OR IGNORE INTO Countries 
                 (country_tag, save_id, name, is_player_country)
@@ -253,7 +238,6 @@ class DataAccessLayer:
             
             game_date = save_data.get("date") or save_data.get("game_date", "1836-01-01")
             
-            # Convert game date format
             if isinstance(game_date, str) and '.' in game_date:
                 try:
                     year, month, day = game_date.split('.')
@@ -261,13 +245,11 @@ class DataAccessLayer:
                 except ValueError:
                     game_date = "1836-01-01"
             
-            # Get country IDs for this save
             country_ids = self._get_country_ids(save_id)
             if not country_ids:
                 logger.error("No countries found for metrics insertion")
                 return 0
             
-            # Get metric type IDs
             metric_type_ids = self._get_metric_type_ids()
             if not metric_type_ids:
                 logger.error("No metric types found")
@@ -281,7 +263,6 @@ class DataAccessLayer:
                 
                 country_id = country_ids[country_tag]
                 
-                # Extract each metric type
                 metrics = self._extract_country_metrics(country_data, game_date)
                 
                 for metric_name, amount in metrics.items():
@@ -301,7 +282,6 @@ class DataAccessLayer:
                 logger.warning("No valid metrics to insert")
                 return 0
             
-            # Batch insert metrics
             inserted_count = self.db.execute_many("""
                 INSERT OR REPLACE INTO CountryMetrics 
                 (country_id, metric_type_id, amount, recorded_at, save_id)
@@ -328,7 +308,6 @@ class DataAccessLayer:
         metrics = {}
         
         try:
-            # GDP - get latest value from trend data
             gdp_data = country_data.get("gdp", {}).get("channels", {}).get("0", {}).get("values", [])
             metrics['gdp'] = gdp_data[-1] if gdp_data else None
             
@@ -347,19 +326,15 @@ class DataAccessLayer:
             _debt  = budget.get("debt_principal") or 0.0
             metrics['money_holding'] = float(_money) - float(_debt) if budget.get("money") is not None else None
             
-            # Prestige - get latest value from trend data
             prestige_data = country_data.get("prestige", {}).get("channels", {}).get("0", {}).get("values", [])
             metrics['prestige'] = prestige_data[-1] if prestige_data else None
             
-            # Literacy - get latest value from trend data
             literacy_data = country_data.get("literacy", {}).get("channels", {}).get("0", {}).get("values", [])
             metrics['literacy'] = literacy_data[-1] if literacy_data else None
             
-            # Average standard of living - get latest value
             avgsol_data = country_data.get("avgsoltrend", {}).get("channels", {}).get("0", {}).get("values", [])
             metrics['avgsol'] = avgsol_data[-1] if avgsol_data else None
             
-            # Population - sum of all strata
             pop_stats = country_data.get("pop_statistics", {})
             total_population = (
                 pop_stats.get("population_lower_strata", 0) +
@@ -372,7 +347,6 @@ class DataAccessLayer:
             military_size = pop_stats.get("population_military_workforce", 0)
             metrics['army_personnel'] = float(military_size) if military_size > 0 else None
 
-            # Culture amount - number of different cultures
             cultures = country_data.get("cultures", [])
             metrics['culture_amount'] = float(len(cultures)) if cultures else None
 
@@ -392,7 +366,6 @@ class DataAccessLayer:
             else:
                 metrics['infamy'] = None
 
-            # Credit limit — try several known paths
             credit_val = (
                 budget.get("credit_limit")
                 or budget.get("debt_settings", {}).get("credit_limit")
@@ -498,8 +471,7 @@ class DataAccessLayer:
         """
         try:
             if playthrough_id:
-                # Get rankings for specific playthrough (latest date in that playthrough)
-                results = self.db.execute_query("""
+                    results = self.db.execute_query("""
                     SELECT 
                         c.country_tag,
                         c.name,
@@ -520,7 +492,6 @@ class DataAccessLayer:
                     LIMIT ?
                 """, (metric_name, playthrough_id, playthrough_id, limit))
             elif date and save_id:
-                # Get rankings for specific date and save
                 results = self.db.execute_query("""
                     SELECT 
                         c.country_tag,
@@ -536,7 +507,6 @@ class DataAccessLayer:
                     LIMIT ?
                 """, (metric_name, date, save_id, limit))
             elif save_id:
-                # Get latest rankings for specific save
                 results = self.db.execute_query("""
                     SELECT 
                         c.country_tag,
@@ -558,7 +528,6 @@ class DataAccessLayer:
                     LIMIT ?
                 """, (metric_name, save_id, metric_name, save_id, limit))
             elif date:
-                # Get rankings for specific date (all saves)
                 results = self.db.execute_query("""
                     SELECT 
                         c.country_tag,
@@ -574,7 +543,6 @@ class DataAccessLayer:
                     LIMIT ?
                 """, (metric_name, date, limit))
             else:
-                # Get latest rankings (from most recent save)
                 results = self.db.execute_query("""
                     SELECT 
                         c.country_tag,
@@ -706,10 +674,6 @@ class DataAccessLayer:
             logger.error(f"Failed to get latest metrics for country playthrough: {e}")
             return []
     
-    # -----------------------------------------------------------------------
-    # Global (D99) aggregate metrics — computed in SQL, never stored
-    # -----------------------------------------------------------------------
-
     # Metrics that are summed across countries vs. median-averaged (from CountryMetrics)
     _GLOBAL_TOTAL_METRICS  = frozenset({'gdp', 'population', 'weekly_income', 'army_personnel'})
     _GLOBAL_MEDIAN_METRICS = frozenset({'avgsol', 'money_holding', 'prestige', 'literacy',
@@ -752,7 +716,6 @@ class DataAccessLayer:
                         GROUP BY mt.display_name, mt.unit
                     """, _params(metric_name))
                 else:
-                    # SQLite median via window functions (requires SQLite ≥ 3.25)
                     rows = self.db.execute_query(f"""
                         SELECT display_name, unit, AVG(amount) AS amount
                         FROM (
@@ -783,7 +746,6 @@ class DataAccessLayer:
             except Exception as e:
                 logger.warning(f"Global metrics (latest) skipped {metric_name}: {e}")
 
-        # IG average metrics (clout + approval) — sourced from InterestGroups table
         ig_col_map = {'ig_avg_clout': ('clout', 'Avg IG Clout', '%'),
                       'ig_avg_approval': ('approval', 'Avg IG Approval', '%')}
         if playthrough_id:
@@ -873,7 +835,6 @@ class DataAccessLayer:
                     LIMIT ?
                 """, params)
             else:
-                # Median per date via window functions
                 rows = self.db.execute_query(f"""
                     SELECT in_game_date, AVG(amount) AS amount
                     FROM (
@@ -902,31 +863,46 @@ class DataAccessLayer:
 
     def get_processed_saves(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get list of processed save files.
-        
+
+        Uses aggregated JOINs instead of correlated subqueries so the query
+        scans each table once rather than N times — dramatically faster when
+        there are many saves.
+
         Args:
             limit: Maximum number of saves to return
-            
+
         Returns:
             List of save file information
         """
         try:
             results = self.db.execute_query("""
-                SELECT 
-                    save_id,
-                    filename,
-                    saved_at,
-                    in_game_date,
-                    file_size,
-                    processing_time_ms,
-                    (SELECT COUNT(*) FROM Countries WHERE save_id = s.save_id) as country_count,
-                    (SELECT COUNT(*) FROM CountryMetrics WHERE save_id = s.save_id) as metric_count
+                SELECT
+                    s.save_id,
+                    s.filename,
+                    s.saved_at,
+                    s.in_game_date,
+                    s.playthrough_id,
+                    s.file_size,
+                    s.processing_time_ms,
+                    COALESCE(cc.country_count, 0)  AS country_count,
+                    COALESCE(mc.metric_count,  0)  AS metric_count
                 FROM Saves s
-                ORDER BY saved_at DESC
+                LEFT JOIN (
+                    SELECT save_id, COUNT(*) AS country_count
+                    FROM Countries
+                    GROUP BY save_id
+                ) cc ON cc.save_id = s.save_id
+                LEFT JOIN (
+                    SELECT save_id, COUNT(*) AS metric_count
+                    FROM CountryMetrics
+                    GROUP BY save_id
+                ) mc ON mc.save_id = s.save_id
+                ORDER BY s.saved_at DESC
                 LIMIT ?
             """, (limit,))
-            
+
             return [dict(row) for row in results]
-            
+
         except Exception as e:
             logger.error(f"Failed to get processed saves: {e}")
             return []
@@ -961,7 +937,6 @@ class DataAccessLayer:
 
                 for war in wars_data:
                     try:
-                        # Upsert the war: insert if new, update timestamps/status if seen before
                         cursor.execute("""
                             INSERT INTO Wars
                                 (save_war_id, playthrough_id, save_id, war_type, strategic_region,
@@ -997,7 +972,6 @@ class DataAccessLayer:
                             war.status,
                         ))
 
-                        # Fetch the internal Wars.id for FK use
                         cursor.execute(
                             "SELECT id FROM Wars WHERE save_war_id = ? AND playthrough_id = ?",
                             (war.save_war_id, playthrough_id)
@@ -1083,7 +1057,6 @@ class DataAccessLayer:
                                 WHERE id = ? AND global_avg_prestige = 0
                             """, (latest_snap, latest_snap, war_db_id))
 
-                        # Insert battles (immutable once recorded)
                         for b in war.battles:
                             cursor.execute("""
                                 INSERT OR IGNORE INTO Battles
@@ -1118,7 +1091,6 @@ class DataAccessLayer:
                         logger.warning(f"Error inserting war {war.save_war_id}: {e}", exc_info=True)
                         continue
 
-                # Mark wars no longer present in this save as ended.
                 # Victoria 3 removes settled wars from war_manager.database, so absence
                 # from the current save means the war has concluded.
                 if game_date:
@@ -1133,7 +1105,6 @@ class DataAccessLayer:
                             [game_date, playthrough_id] + list(current_save_war_ids)
                         )
                     else:
-                        # No wars found in save at all — mark every ongoing war ended
                         cursor.execute(
                             """UPDATE Wars
                                SET status = 'ended', ended_on = ?, updated_at = CURRENT_TIMESTAMP
@@ -1173,7 +1144,6 @@ class DataAccessLayer:
             if not ig_list:
                 return 0
 
-            # Build country_tag → country_id map for this save
             country_ids = self._get_country_ids(save_id)
             if not country_ids:
                 logger.warning("insert_interest_groups: no countries found for save")

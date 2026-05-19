@@ -41,7 +41,7 @@ class FileValidator:
             config: Configuration manager instance
         """
         self.config = config
-        self.max_file_size = config.get("max_file_size_mb", 100) * 1024 * 1024  # Convert to bytes
+        self.max_file_size = config.get("max_file_size_mb", 100) * 1024 * 1024
     
     def validate_file(self, file_path: Path) -> Dict[str, Any]:
         """Validate a save file for processing.
@@ -61,22 +61,18 @@ class FileValidator:
         }
         
         try:
-            # Check if file exists
             if not file_path.exists():
                 result['errors'].append(f"File does not exist: {file_path}")
                 return result
-            
-            # Check if it's a file (not directory)
+
             if not file_path.is_file():
                 result['errors'].append(f"Path is not a file: {file_path}")
                 return result
-            
-            # Check file extension
+
             if file_path.suffix.lower() != '.v3':
                 result['errors'].append(f"Invalid file extension: {file_path.suffix}")
                 return result
-            
-            # Check file size
+
             file_size = file_path.stat().st_size
             result['file_size'] = file_size
             
@@ -87,26 +83,22 @@ class FileValidator:
             if file_size > self.max_file_size:
                 result['errors'].append(f"File too large: {file_size / (1024*1024):.1f}MB > {self.max_file_size / (1024*1024):.1f}MB")
                 return result
-            
-            # Check file permissions
+
             if not os.access(file_path, os.R_OK):
                 result['errors'].append("File is not readable")
                 return result
-            
-            # Check if file is still being written (size stability)
+
             if not self._is_file_stable(file_path):
                 result['warnings'].append("File may still be being written")
                 return result
-            
-            # Check filename patterns that might indicate temporary files
+
             filename = file_path.name.lower()
             temp_patterns = ['.tmp', '.temp', '~', '.bak', '.partial']
             for pattern in temp_patterns:
                 if pattern in filename:
                     result['warnings'].append(f"Filename suggests temporary file: {pattern}")
                     break
-            
-            # If we get here, file is valid
+
             result['valid'] = True
             logger.debug(f"File validation passed: {file_path.name} ({file_size} bytes)")
             
@@ -208,15 +200,14 @@ class FileProcessingQueue:
         
         logger.info("Stopping file processing queue...")
         self.running = False
-        
-        # Add sentinel values to wake up workers
+
         for _ in self.worker_threads:
             try:
                 self.task_queue.put_nowait(None)
             except queue.Full:
                 pass
-        
-        # Wait for workers to finish
+
+
         for worker in self.worker_threads:
             try:
                 worker.join(timeout=5)
@@ -242,7 +233,6 @@ class FileProcessingQueue:
             return False
         
         try:
-            # Validate file first
             validation_result = self.validator.validate_file(file_path)
             
             if not validation_result['valid']:
@@ -250,19 +240,17 @@ class FileProcessingQueue:
                 with self.stats_lock:
                     self.stats['files_skipped'] += 1
                 return False
-            
-            # Log any warnings
+
+
             if validation_result['warnings']:
                 for warning in validation_result['warnings']:
                     logger.warning(f"File validation warning for {file_path.name}: {warning}")
-            
-            # Create processing task
+
             task = ProcessingTask(
                 file_path=file_path,
                 detected_at=datetime.now()
             )
-            
-            # Add to queue
+
             self.task_queue.put(task, timeout=1)
             
             with self.stats_lock:
@@ -285,25 +273,22 @@ class FileProcessingQueue:
         
         while self.running:
             try:
-                # Get task from queue (with timeout)
                 task = self.task_queue.get(timeout=1)
                 
                 # Check for sentinel value (shutdown signal)
                 if task is None:
                     break
-                
-                # Process the task
+
+
                 self._process_task(task, worker_name)
-                
-                # Mark task as done
+
                 self.task_queue.task_done()
                 
             except queue.Empty:
-                # Timeout waiting for task, continue loop
                 continue
             except Exception as e:
                 logger.error(f"Error in worker {worker_name}: {e}")
-                time.sleep(1)  # Brief pause before retrying
+                time.sleep(1)
         
         logger.debug(f"Worker {worker_name} stopped")
     
@@ -319,22 +304,18 @@ class FileProcessingQueue:
         
         try:
             logger.info(f"[{worker_name}] Processing file: {task.file_path.name} (attempt {task.attempts + 1})")
-            
-            # Re-validate file before processing
+
             validation_result = self.validator.validate_file(task.file_path)
             if not validation_result['valid']:
                 logger.error(f"[{worker_name}] File validation failed during processing: {validation_result['errors']}")
                 with self.stats_lock:
                     self.stats['files_failed'] += 1
                 return
-            
-            # Process file with timeout
+
             task.attempts += 1
-            
-            # Use a timeout wrapper for the processing
+
             success = self._process_with_timeout(task.file_path, worker_name)
-            
-            # Update statistics
+
             processing_time = time.time() - start_time
             
             with self.stats_lock:
@@ -389,7 +370,6 @@ class FileProcessingQueue:
             True if processing succeeded
         """
         try:
-            # Create a result container for the thread
             result = {'success': False, 'exception': None}
             
             def process_target():
@@ -397,12 +377,11 @@ class FileProcessingQueue:
                     result['success'] = self.processor_callback(file_path)
                 except Exception as e:
                     result['exception'] = e
-            
-            # Start processing in a separate thread
+
+
             process_thread = threading.Thread(target=process_target, daemon=True)
             process_thread.start()
-            
-            # Wait for completion with timeout
+
             process_thread.join(timeout=self.processing_timeout)
             
             if process_thread.is_alive():

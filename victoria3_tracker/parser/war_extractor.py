@@ -96,7 +96,6 @@ class WarExtractor:
             'extraction_errors': 0
         }
 
-        # Build country numeric ID -> 3-letter tag mapping
         id_to_tag = self._build_id_to_tag(parsed_data)
         logger.debug(f"Built ID-to-tag map with {len(id_to_tag)} entries")
 
@@ -132,10 +131,6 @@ class WarExtractor:
                     f"({self.extraction_stats['participants_extracted']} participants, "
                     f"{self.extraction_stats['battles_extracted']} battles)")
         return wars
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
 
     def _build_id_to_tag(self, parsed_data: Dict[str, Any]) -> Dict[str, str]:
         """Build numeric country ID -> 3-letter tag mapping."""
@@ -176,7 +171,6 @@ class WarExtractor:
         ended_on = None if is_ongoing else self._fmt_date(peace_raw)
         status = 'ongoing' if is_ongoing else 'ended'
 
-        # Diplomatic play data
         play_id = str(war_data.get('diplomatic_play', ''))
         play_data = plays_db.get(play_id, {}) if play_id else {}
 
@@ -188,7 +182,6 @@ class WarExtractor:
         initiator_maneuvers = int(play_data.get('initiator_maneuvers', 0))
         target_maneuvers = int(play_data.get('target_maneuvers', 0))
 
-        # Attacker/defender sets (numeric string IDs)
         initiator_id = str(play_data.get('initiator', ''))
         target_id = str(play_data.get('target', ''))
         extra_targets = [str(t) for t in play_data.get('targets', [])]
@@ -222,7 +215,6 @@ class WarExtractor:
                               attacker_ids: set, defender_ids: set,
                               id_to_tag: Dict[str, str]) -> List[WarParticipant]:
         """Extract participant list from war_participants + diplomatic play costs."""
-        # Casualties by country ID: sum attrition across all fronts
         casualties_map: Dict[str, float] = {}
         for entry in play_data.get('casualties', []):
             if not isinstance(entry, dict):
@@ -234,7 +226,6 @@ class WarExtractor:
             if cid:
                 casualties_map[cid] = casualties_map.get(cid, 0.0) + float(total)
 
-        # Materiel and wage costs by country ID
         materiel_map: Dict[str, float] = {}
         wage_map: Dict[str, float] = {}
         for rec in play_data.get('country_records', []):
@@ -314,7 +305,6 @@ class WarExtractor:
             if not isinstance(battle_data, dict):
                 continue
 
-            # Only battles belonging to this war
             if war_id_int is not None and battle_data.get('war') != war_id_int:
                 continue
 
@@ -328,7 +318,6 @@ class WarExtractor:
             if not att_tag or not def_tag or att_tag == def_tag:
                 continue
 
-            # Casualties: sum num_dead across culture groups
             att_dead = sum(
                 s.get('num_dead', 0) for s in att_info.get('statistics', [])
                 if isinstance(s, dict)
@@ -338,7 +327,6 @@ class WarExtractor:
                 if isinstance(s, dict)
             )
 
-            # Battalion losses
             att_bat_lost = max(0,
                 (battle_data.get('attacker_start_battalions') or 0) -
                 (battle_data.get('attacker_ending_battalions') or 0))
@@ -346,7 +334,6 @@ class WarExtractor:
                 (battle_data.get('defender_start_battalions') or 0) -
                 (battle_data.get('defender_ending_battalions') or 0))
 
-            # Winner from status
             status = battle_data.get('status', 'unknown')
             if status == 'attacker_victory':
                 winner_tag = att_tag
@@ -355,7 +342,6 @@ class WarExtractor:
             else:
                 winner_tag = None
 
-            # Province location
             loc = battle_data.get('province')
             location_province_id = str(loc) if loc is not None else None
 

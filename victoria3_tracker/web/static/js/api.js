@@ -2,7 +2,6 @@
  * API client for Victoria 3 Game Tracker
  */
 
-// API Configuration
 const API_BASE_URL = window.location.origin;
 const API_TIMEOUT = 10000; // 10 seconds
 
@@ -178,8 +177,6 @@ async function getPlaythroughs() {
     return apiRequest('/api/playthroughs');
 }
 
-// ─── War API helpers ──────────────────────────────────────────────────────────
-
 /**
  * Get list of wars with optional filtering
  * @param {Object} params - { country, playthrough_id, status, limit }
@@ -233,8 +230,6 @@ async function getCountryWarPerformance(countryTag, params = {}) {
     const qs = new URLSearchParams(params).toString();
     return apiRequest(`/api/countries/${countryTag}/war-performance${qs ? '?' + qs : ''}`);
 }
-
-// Utility functions
 
 /**
  * Format numbers for display
@@ -334,7 +329,6 @@ function showAlert(message, type = 'info', duration = 5000) {
     
     alertsContainer.insertAdjacentHTML('beforeend', alertHtml);
     
-    // Auto-dismiss if duration is set
     if (duration > 0) {
         setTimeout(() => {
             const alert = document.getElementById(alertId);
@@ -397,8 +391,6 @@ function debounce(func, wait, immediate) {
     };
 }
 
-// ─── CSV map loader (shared internal helper) ─────────────────────────────────
-
 /**
  * Fetch a two-column Tag,Value CSV and populate targetMap.
  * First column (tag) is always upper-cased before storage.
@@ -429,8 +421,6 @@ async function _loadCSVMap(url, targetMap, valueTransform = null) {
     }
     return count;
 }
-
-// ─── Country name lookup (shared across all pages) ───────────────────────────
 
 /**
  * Shared Victoria 3 country tag → English display name map.
@@ -468,8 +458,6 @@ async function loadCountryNamesCSV() {
         console.warn('Could not load country_names.csv:', err);
     }
 }
-
-// ─── War adjective / name lookup (shared across all pages) ───────────────────
 
 /**
  * Shared Victoria 3 country tag → war adjective map.
@@ -620,12 +608,9 @@ function generateWarName(war) {
             // If the attacker is unidentified (e.g. a rebellion with no recorded tag),
             // treat it as a Revolutionary War against the primary defender government
             if (att === 'Unknown') return `${defMain} Revolutionary War of ${year}`;
-            // Generic fallback: "British-Russo War of 1840"
             return `${att}-${def} War of ${year}`;
     }
 }
-
-// ─── Shared UI helpers ────────────────────────────────────────────────────────
 
 /**
  * Bootstrap spinner wrapped in a centred div — use inside any container element.
@@ -681,14 +666,12 @@ function setupChartDefaults() {
     Chart.defaults.borderColor = '#e0e0e0';
 }
 
-// Kick off early initialisation as soon as the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     loadCountryNamesCSV();
     loadWarAdjectivesCSV();
     setupChartDefaults();
 });
 
-// Export functions for use in other scripts
 window.apiRequest = apiRequest;
 window.getHealth = getHealth;
 window.getCountries = getCountries;
@@ -711,26 +694,22 @@ window.showLoading = showLoading;
 window.hideLoading = hideLoading;
 window.debounce = debounce;
 
-// Country name lookup exports
 window.V3CountryNames        = V3CountryNames;
 window.toTitleCase           = toTitleCase;
 window.getCountryName        = getCountryName;
 window.loadCountryNamesCSV   = loadCountryNamesCSV;
 
-// War naming exports
 window.V3WarAdjectives       = V3WarAdjectives;
 window.loadWarAdjectivesCSV  = loadWarAdjectivesCSV;
 window.getWarAdjective       = getWarAdjective;
 window.formatRegion          = formatRegion;
 window.generateWarName       = generateWarName;
 
-// Shared UI helper exports
 window.spinnerHTML           = spinnerHTML;
 window.tableSpinnerHTML      = tableSpinnerHTML;
 window.rankBadge             = rankBadge;
 window.setupChartDefaults    = setupChartDefaults;
 
-// War API exports
 window.getWars = getWars;
 window.getWarDetails = getWarDetails;
 window.getWarStatistics = getWarStatistics;

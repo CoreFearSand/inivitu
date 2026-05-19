@@ -29,7 +29,6 @@
 </div>
 
 <div class="row">
-    <!-- Rankings Table -->
     <div class="col-lg-8 mb-4">
         <div class="card">
             <div class="card-header">
@@ -88,7 +87,6 @@
         </div>
     </div>
     
-    <!-- Rankings Chart -->
     <div class="col-lg-4 mb-4">
         <div class="card">
             <div class="card-header">
@@ -101,7 +99,6 @@
     </div>
 </div>
 
-<!-- Metric Comparison -->
 <div class="row">
     <div class="col-12">
         <div class="card">
@@ -135,7 +132,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 function setupRankingsPage() {
-    // Metric selector change handler
     const metricSelector = document.getElementById('metric-selector');
     if (metricSelector) {
         metricSelector.addEventListener('change', function() {
@@ -156,12 +152,10 @@ async function loadRankings(metric) {
         
         const data = await getRankings(metric, { limit: 50 });
         
-        // Update table header
         if (header) {
             header.textContent = metric.toUpperCase();
         }
-        
-        // Update table body
+
         let html = '';
         if (data.rankings && data.rankings.length > 0) {
             data.rankings.forEach((country, index) => {
@@ -191,10 +185,9 @@ async function loadRankings(metric) {
         }
         
         tbody.innerHTML = html;
-        
-        // Update chart
+
         loadRankingsChart(metric);
-        
+
         loading.style.display = 'none';
         container.style.display = 'block';
         
@@ -221,11 +214,10 @@ async function loadRankingsChart(metric) {
         
         const ctx = canvas.getContext('2d');
         
-        // Destroy existing chart
         if (rankingsChart) {
             rankingsChart.destroy();
         }
-        
+
         if (!data.rankings || data.rankings.length === 0) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.fillStyle = '#666';
@@ -245,7 +237,7 @@ async function loadRankingsChart(metric) {
                     label: metric.toUpperCase(),
                     data: values,
                     backgroundColor: [
-                        '#FFD700', '#C0C0C0', '#CD7F32', // Gold, Silver, Bronze
+                        '#FFD700', '#C0C0C0', '#CD7F32',
                         '#4BC0C0', '#36A2EB', '#FFCE56', '#FF6384', 
                         '#9966FF', '#FF9F40', '#FF6384'
                     ],
@@ -293,7 +285,6 @@ async function loadRankingsChart(metric) {
 
 async function loadMetricComparison() {
     try {
-        // Get top 5 countries for multiple metrics
         const metrics = ['gdp', 'population', 'prestige', 'army_personnel'];
         const comparisonData = {};
         
@@ -307,18 +298,16 @@ async function loadMetricComparison() {
         
         const ctx = canvas.getContext('2d');
         
-        // Destroy existing chart
         if (comparisonChart) {
             comparisonChart.destroy();
         }
-        
-        // Get unique countries from all metrics
+
         const allCountries = new Set();
         Object.values(comparisonData).forEach(rankings => {
             rankings.forEach(country => allCountries.add(country.country_tag));
         });
         
-        const countries = Array.from(allCountries).slice(0, 10); // Limit to 10 countries
+        const countries = Array.from(allCountries).slice(0, 10);
         
         const datasets = metrics.map((metric, index) => {
             const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0'];

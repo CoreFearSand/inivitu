@@ -14,97 +14,38 @@
                 <button class="btn btn-outline-success" onclick="showExportModal('saves')">
                     <i class="fas fa-download"></i> Export
                 </button>
+                <button class="btn btn-outline-info" onclick="showImportModal()">
+                    <i class="fas fa-upload"></i> Import
+                </button>
             </div>
         </div>
     </div>
 </div>
 
+<!-- ── Save Files ─────────────────────────────────────────────────────────── -->
 <div class="row">
     <div class="col-12">
         <div class="card">
             <div class="card-header">
                 <div class="d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Save Files</h5>
-                    <small class="text-muted">{{ saves|length }} saves processed</small>
+                    <small class="text-muted" id="saves-count-label">Loading…</small>
                 </div>
             </div>
             <div class="card-body">
-                <div id="saves-loading" class="text-center" style="display: none;">
+                <div id="saves-loading" class="text-center py-4">
                     <div class="spinner-border" role="status">
-                        <span class="visually-hidden">Loading...</span>
+                        <span class="visually-hidden">Loading…</span>
                     </div>
+                    <p class="mt-2 text-muted small">Loading saves…</p>
                 </div>
-                
-                <div id="saves-container">
-                    {% if saves %}
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Filename</th>
-                                    <th>Game Date</th>
-                                    <th>Countries</th>
-                                    <th>Metrics</th>
-                                    <th>File Size</th>
-                                    <th>Processing Time</th>
-                                    <th>Processed At</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for save in saves %}
-                                <tr>
-                                    <td>
-                                        <div class="d-flex align-items-center">
-                                            <i class="fas fa-file-alt me-2 text-muted"></i>
-                                            <div>
-                                                <strong>{{ save.filename }}</strong><br>
-                                                <small class="text-muted">{{ save.save_id[:8] }}...</small>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-info">{{ save.in_game_date or '-' }}</span>
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-success">{{ save.country_count or 0 }}</span>
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-primary">{{ save.metric_count or 0 }}</span>
-                                    </td>
-                                    <td>
-                                        <small class="text-muted">{{ save.file_size | filesizeformat if save.file_size else '-' }}</small>
-                                    </td>
-                                    <td>
-                                        <small class="text-muted">
-                                            {% if save.processing_time_ms %}
-                                                {{ "%.1f"|format(save.processing_time_ms / 1000) }}s
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </small>
-                                    </td>
-                                    <td>
-                                        <small class="text-muted">{{ save.saved_at[:19] if save.saved_at else '-' }}</small>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% else %}
-                    <div class="text-center text-muted py-5">
-                        <i class="fas fa-save fa-3x mb-3"></i>
-                        <h5>No Saves Processed</h5>
-                        <p>No save files have been processed yet. The system will automatically process new save files when they are detected.</p>
-                    </div>
-                    {% endif %}
-                </div>
+                <div id="saves-container" style="display:none;"></div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Playthrough Management -->
+<!-- ── Manage Playthroughs ───────────────────────────────────────────────── -->
 <div class="row mt-4">
     <div class="col-12">
         <div class="card">
@@ -131,7 +72,7 @@
     </div>
 </div>
 
-<!-- Processing Statistics -->
+<!-- ── Processing Statistics ─────────────────────────────────────────────── -->
 <div class="row mt-4">
     <div class="col-md-6">
         <div class="card">
@@ -143,7 +84,7 @@
             </div>
         </div>
     </div>
-    
+
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
@@ -155,8 +96,11 @@
         </div>
     </div>
 </div>
-<!-- Delete Playthrough Confirmation Modal -->
-<div class="modal fade" id="deletePlaythroughModal" tabindex="-1" aria-labelledby="deletePlaythroughModalLabel" aria-hidden="true">
+
+<!-- ══════════════════════ MODALS ═══════════════════════════════════════════ -->
+
+<div class="modal fade" id="deletePlaythroughModal" tabindex="-1"
+     aria-labelledby="deletePlaythroughModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header border-danger">
@@ -169,14 +113,90 @@
                 <p>You are about to permanently delete:</p>
                 <p class="fw-bold" id="delete-playthrough-name"></p>
                 <p class="text-danger small mb-0">
-                    This will remove all saves, country metrics, and war records for this campaign.
+                    This removes all saves, country metrics, interest groups, laws and war records
+                    for this campaign. <strong>This cannot be undone.</strong>
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-pt-btn">
+                    <i class="fas fa-trash me-1"></i>Confirm Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="deleteSaveModal" tabindex="-1"
+     aria-labelledby="deleteSaveModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header border-danger">
+                <h5 class="modal-title text-danger" id="deleteSaveModalLabel">
+                    <i class="fas fa-exclamation-triangle me-2"></i>Delete Save File?
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>You are about to permanently delete this save:</p>
+                <p class="fw-bold font-monospace" id="delete-save-filename"></p>
+                <p class="text-danger small mb-0">
+                    This removes all country metrics and interest-group snapshots recorded in this save.
                     <strong>This cannot be undone.</strong>
                 </p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirm-delete-btn">
+                <button type="button" class="btn btn-danger" id="confirm-delete-save-btn">
                     <i class="fas fa-trash me-1"></i>Confirm Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="importModal" tabindex="-1"
+     aria-labelledby="importModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importModalLabel">
+                    <i class="fas fa-upload me-2"></i>Import Data
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Data type</label>
+                    <div class="d-flex gap-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="importType"
+                                   id="importTypeMetrics" value="metrics" checked>
+                            <label class="form-check-label" for="importTypeMetrics">Metrics</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="importType"
+                                   id="importTypeWars" value="wars">
+                            <label class="form-check-label" for="importTypeWars">Wars</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label for="importFile" class="form-label fw-semibold">File (CSV or JSON)</label>
+                    <input class="form-control" type="file" id="importFile"
+                           accept=".csv,.json,text/csv,application/json">
+                    <div class="form-text">
+                        Upload a file previously exported from this tracker.
+                        Metrics: <code>CSV / JSON</code> — Wars: <code>CSV / JSON</code>
+                    </div>
+                </div>
+                <div id="import-result" class="alert" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="confirm-import-btn"
+                        onclick="doImport()">
+                    <i class="fas fa-upload me-1"></i>Import
                 </button>
             </div>
         </div>
@@ -186,173 +206,175 @@
 
 {% block extra_scripts %}
 <script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   State
+   ═══════════════════════════════════════════════════════════════════════════ */
 let processingStatsChart = null;
 let fileSizeChart = null;
+let _pendingDeleteSaveId   = null;
+let _pendingDeletePtId     = null;
 
-document.addEventListener('DOMContentLoaded', function() {
-    loadProcessingStats();
-    loadFileSizeDistribution();
-    loadPlaythroughs();
-});
-
-async function loadProcessingStats() {
-    try {
-        const data = await getStats();
-        
-        const canvas = document.getElementById('processing-stats-chart');
-        if (!canvas) return;
-        
-        const ctx = canvas.getContext('2d');
-        
-        // Destroy existing chart
-        if (processingStatsChart) {
-            processingStatsChart.destroy();
-        }
-        
-        // Get processing summary from stats
-        const processingSummary = data.processing_summary || {};
-        const labels = Object.keys(processingSummary);
-        const values = Object.values(processingSummary);
-        
-        if (labels.length === 0) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#666';
-            ctx.textAlign = 'center';
-            ctx.fillText('No processing data available', canvas.width / 2, canvas.height / 2);
-            return;
-        }
-        
-        processingStatsChart = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: labels.map(label => label.charAt(0).toUpperCase() + label.slice(1)),
-                datasets: [{
-                    data: values,
-                    backgroundColor: [
-                        '#28a745', // success - green
-                        '#dc3545', // error - red
-                        '#ffc107', // skipped - yellow
-                        '#17a2b8'  // other - blue
-                    ],
-                    borderWidth: 2,
-                    borderColor: '#fff'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom'
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = ((context.parsed / total) * 100).toFixed(1);
-                                return `${context.label}: ${context.parsed} (${percentage}%)`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        
-    } catch (error) {
-        console.error('Error loading processing stats:', error);
-    }
+/* ═══════════════════════════════════════════════════════════════════════════
+   Bootstrap Modal helper (handles duplicate-instance edge cases)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function getOrCreateModal(id) {
+    const el = document.getElementById(id);
+    return bootstrap.Modal.getOrCreateInstance(el);
 }
 
-async function loadFileSizeDistribution() {
+/* ═══════════════════════════════════════════════════════════════════════════
+   Init
+   ═══════════════════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', function () {
+    loadSaves();
+    loadPlaythroughs();
+    loadProcessingStats();
+    loadFileSizeDistribution();
+
+    document.getElementById('confirm-delete-save-btn').addEventListener('click', doDeleteSave);
+    document.getElementById('confirm-delete-pt-btn').addEventListener('click', doDeletePlaythrough);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Save files table (client-side rendered)
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function loadSaves() {
+    const loading   = document.getElementById('saves-loading');
+    const container = document.getElementById('saves-container');
+    const label     = document.getElementById('saves-count-label');
+
+    loading.style.display = 'block';
+    container.style.display = 'none';
+
     try {
-        const data = await getSaves({ limit: 100 });
-        
-        const canvas = document.getElementById('file-size-chart');
-        if (!canvas) return;
-        
-        const ctx = canvas.getContext('2d');
-        
-        // Destroy existing chart
-        if (fileSizeChart) {
-            fileSizeChart.destroy();
+        const resp = await fetch('/api/saves?limit=200');
+        const data = await resp.json();
+        loading.style.display = 'none';
+
+        const saves = data.saves || [];
+        label.textContent = `${saves.length} saves processed`;
+
+        if (saves.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-5">
+                    <i class="fas fa-save fa-3x mb-3"></i>
+                    <h5>No Saves Processed</h5>
+                    <p>No save files have been processed yet.</p>
+                </div>`;
+        } else {
+            const rows = saves.map(s => {
+                const sizeMB = s.file_size
+                    ? (s.file_size / (1024 * 1024)).toFixed(1) + ' MB'
+                    : '—';
+                const procTime = s.processing_time_ms
+                    ? (s.processing_time_ms / 1000).toFixed(1) + 's'
+                    : '—';
+                const processedAt = s.saved_at ? s.saved_at.substring(0, 19) : '—';
+                const shortId = s.save_id ? s.save_id.substring(0, 8) + '…' : '—';
+                return `<tr>
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-file-alt me-2 text-muted"></i>
+                            <div>
+                                <strong>${escapeHtml(s.filename)}</strong><br>
+                                <small class="text-muted font-monospace">${escapeHtml(shortId)}</small>
+                            </div>
+                        </div>
+                    </td>
+                    <td><span class="badge bg-info">${escapeHtml(s.in_game_date || '—')}</span></td>
+                    <td><span class="badge bg-success">${s.country_count || 0}</span></td>
+                    <td><span class="badge bg-primary">${s.metric_count || 0}</span></td>
+                    <td><small class="text-muted">${sizeMB}</small></td>
+                    <td><small class="text-muted">${procTime}</small></td>
+                    <td><small class="text-muted">${processedAt}</small></td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-danger"
+                                data-save-id="${escapeHtml(s.save_id)}"
+                                data-filename="${escapeHtml(s.filename)}"
+                                onclick="showDeleteSave(this.dataset.saveId, this.dataset.filename)">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            container.innerHTML = `
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm">
+                        <thead>
+                            <tr>
+                                <th>Filename</th>
+                                <th>Game Date</th>
+                                <th>Countries</th>
+                                <th>Metrics</th>
+                                <th>File Size</th>
+                                <th>Processing Time</th>
+                                <th>Processed At</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
         }
-        
-        if (!data.saves || data.saves.length === 0) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#666';
-            ctx.textAlign = 'center';
-            ctx.fillText('No file size data available', canvas.width / 2, canvas.height / 2);
-            return;
-        }
-        
-        // Group files by size ranges
-        const sizeRanges = {
-            '< 1MB': 0,
-            '1-10MB': 0,
-            '10-50MB': 0,
-            '50-100MB': 0,
-            '> 100MB': 0
-        };
-        
-        data.saves.forEach(save => {
-            const sizeMB = (save.file_size || 0) / (1024 * 1024);
-            
-            if (sizeMB < 1) {
-                sizeRanges['< 1MB']++;
-            } else if (sizeMB < 10) {
-                sizeRanges['1-10MB']++;
-            } else if (sizeMB < 50) {
-                sizeRanges['10-50MB']++;
-            } else if (sizeMB < 100) {
-                sizeRanges['50-100MB']++;
-            } else {
-                sizeRanges['> 100MB']++;
-            }
-        });
-        
-        fileSizeChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: Object.keys(sizeRanges),
-                datasets: [{
-                    label: 'Number of Files',
-                    data: Object.values(sizeRanges),
-                    backgroundColor: '#36A2EB',
-                    borderColor: '#36A2EB',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            stepSize: 1
-                        }
-                    }
-                }
-            }
-        });
-        
-    } catch (error) {
-        console.error('Error loading file size distribution:', error);
+        container.style.display = 'block';
+    } catch (err) {
+        loading.style.display = 'none';
+        container.innerHTML = '<p class="text-danger">Failed to load saves.</p>';
+        container.style.display = 'block';
+        console.error('Error loading saves:', err);
     }
 }
 
 function refreshSaves() {
-    window.location.reload();
+    loadSaves();
+    loadPlaythroughs();
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Delete individual save
+   ═══════════════════════════════════════════════════════════════════════════ */
+function showDeleteSave(saveId, filename) {
+    _pendingDeleteSaveId = saveId;
+    document.getElementById('delete-save-filename').textContent = filename;
+
+    const btn = document.getElementById('confirm-delete-save-btn');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-trash me-1"></i>Confirm Delete';
+
+    getOrCreateModal('deleteSaveModal').show();
+}
+
+async function doDeleteSave() {
+    const btn = document.getElementById('confirm-delete-save-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…';
+
+    try {
+        const resp = await fetch(`/api/saves/${encodeURIComponent(_pendingDeleteSaveId)}`, {
+            method: 'DELETE'
+        });
+        const data = await resp.json();
+        getOrCreateModal('deleteSaveModal').hide();
+
+        if (resp.ok && data.success) {
+            loadSaves();
+        } else {
+            alert(`Failed to delete save: ${data.error || 'Unknown error'}`);
+        }
+    } catch (err) {
+        getOrCreateModal('deleteSaveModal').hide();
+        alert('Failed to delete save. See console for details.');
+        console.error('Error deleting save:', err);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Playthroughs table
+   ═══════════════════════════════════════════════════════════════════════════ */
 async function loadPlaythroughs() {
     const container = document.getElementById('playthroughs-container');
-    const loading = document.getElementById('playthroughs-loading');
+    const loading   = document.getElementById('playthroughs-loading');
     if (!container) return;
 
     loading.style.display = 'block';
@@ -370,10 +392,13 @@ async function loadPlaythroughs() {
 
         const rows = data.playthroughs.map(pt => {
             const country = pt.player_country || '—';
-            const start = pt.start_date || '—';
-            const end = pt.end_date || '—';
-            const saves = pt.save_count || 0;
+            const start   = pt.start_date     || '—';
+            const end     = pt.end_date       || '—';
+            const saves   = pt.save_count     || 0;
             const shortId = pt.playthrough_id.substring(0, 8) + '…';
+            // Use data-* attributes so onclick never sees quotes-inside-quotes.
+            const ptIdAttr   = escapeHtml(pt.playthrough_id);
+            const nameAttr   = escapeHtml(pt.name);
             return `<tr>
                 <td>
                     <strong>${escapeHtml(pt.name)}</strong><br>
@@ -384,10 +409,27 @@ async function loadPlaythroughs() {
                 <td>${escapeHtml(end)}</td>
                 <td><span class="badge bg-secondary">${saves}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-outline-danger"
-                            onclick="showDeleteConfirm(${JSON.stringify(pt.playthrough_id)}, ${JSON.stringify(pt.name)})">
-                        <i class="fas fa-trash"></i> Delete
-                    </button>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-success"
+                                title="Export metrics (CSV)"
+                                data-pt-id="${ptIdAttr}"
+                                onclick="exportCampaign(this.dataset.ptId, 'metrics', 'csv')">
+                            <i class="fas fa-chart-line"></i> Metrics
+                        </button>
+                        <button class="btn btn-outline-primary"
+                                title="Export wars (CSV)"
+                                data-pt-id="${ptIdAttr}"
+                                onclick="exportCampaign(this.dataset.ptId, 'wars', 'csv')">
+                            <i class="fas fa-sword"></i> Wars
+                        </button>
+                        <button class="btn btn-outline-danger"
+                                title="Delete this campaign"
+                                data-pt-id="${ptIdAttr}"
+                                data-name="${nameAttr}"
+                                onclick="showDeletePlaythrough(this.dataset.ptId, this.dataset.name)">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
                 </td>
             </tr>`;
         }).join('');
@@ -415,65 +457,220 @@ async function loadPlaythroughs() {
     }
 }
 
-let _pendingDeleteId = null;
-
-function showDeleteConfirm(playthroughId, name) {
-    _pendingDeleteId = playthroughId;
-    document.getElementById('delete-playthrough-name').textContent = name;
-
-    const confirmBtn = document.getElementById('confirm-delete-btn');
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = 'Confirm Delete';
-
-    const modal = new bootstrap.Modal(document.getElementById('deletePlaythroughModal'));
-    modal.show();
-
-    // Wire up confirm button (replace any previous listener)
-    const newBtn = confirmBtn.cloneNode(true);
-    confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
-    newBtn.addEventListener('click', async () => {
-        newBtn.disabled = true;
-        newBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…';
-
-        try {
-            const resp = await fetch(`/api/playthroughs/${encodeURIComponent(_pendingDeleteId)}`, {
-                method: 'DELETE'
-            });
-            const data = await resp.json();
-
-            bootstrap.Modal.getInstance(document.getElementById('deletePlaythroughModal')).hide();
-
-            if (resp.ok && data.success) {
-                await loadPlaythroughs();
-            } else {
-                alert(`Failed to delete playthrough: ${data.error || 'Unknown error'}`);
-            }
-        } catch (err) {
-            bootstrap.Modal.getInstance(document.getElementById('deletePlaythroughModal')).hide();
-            alert('Failed to delete playthrough. See console for details.');
-            console.error('Error deleting playthrough:', err);
-        }
-    });
+/* ─── Export per campaign ─────────────────────────────────────────────────── */
+function exportCampaign(playthroughId, type, fmt) {
+    const url = `/api/export/${type}?format=${fmt}&playthrough_id=${encodeURIComponent(playthroughId)}`;
+    window.location.href = url;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Delete playthrough
+   ═══════════════════════════════════════════════════════════════════════════ */
+function showDeletePlaythrough(playthroughId, name) {
+    _pendingDeletePtId = playthroughId;
+    document.getElementById('delete-playthrough-name').textContent = name;
+
+    const btn = document.getElementById('confirm-delete-pt-btn');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-trash me-1"></i>Confirm Delete';
+
+    getOrCreateModal('deletePlaythroughModal').show();
+}
+
+async function doDeletePlaythrough() {
+    const btn = document.getElementById('confirm-delete-pt-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…';
+
+    try {
+        const resp = await fetch(`/api/playthroughs/${encodeURIComponent(_pendingDeletePtId)}`, {
+            method: 'DELETE'
+        });
+        const data = await resp.json();
+        getOrCreateModal('deletePlaythroughModal').hide();
+
+        if (resp.ok && data.success) {
+            await loadPlaythroughs();
+            await loadSaves();
+        } else {
+            alert(`Failed to delete playthrough: ${data.error || 'Unknown error'}`);
+        }
+    } catch (err) {
+        getOrCreateModal('deletePlaythroughModal').hide();
+        alert('Failed to delete playthrough. See console for details.');
+        console.error('Error deleting playthrough:', err);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Import
+   ═══════════════════════════════════════════════════════════════════════════ */
+function showImportModal() {
+    document.getElementById('importFile').value = '';
+    const result = document.getElementById('import-result');
+    result.style.display = 'none';
+    result.className = 'alert';
+    result.textContent = '';
+    document.getElementById('confirm-import-btn').disabled = false;
+    document.getElementById('confirm-import-btn').innerHTML =
+        '<i class="fas fa-upload me-1"></i>Import';
+
+    getOrCreateModal('importModal').show();
+}
+
+async function doImport() {
+    const fileInput = document.getElementById('importFile');
+    const type = document.querySelector('input[name="importType"]:checked').value;
+    const btn = document.getElementById('confirm-import-btn');
+    const result = document.getElementById('import-result');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        result.className = 'alert alert-warning';
+        result.textContent = 'Please select a file to import.';
+        result.style.display = 'block';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importing…';
+    result.style.display = 'none';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        const resp = await fetch(`/api/import/${type}`, {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await resp.json();
+
+        if (resp.ok && data.success) {
+            result.className = 'alert alert-success';
+            result.textContent = data.message || `Imported ${data.imported} rows.`;
+            loadSaves();
+            loadPlaythroughs();
+        } else {
+            result.className = 'alert alert-danger';
+            result.textContent = `Import failed: ${data.error || 'Unknown error'}`;
+        }
+    } catch (err) {
+        result.className = 'alert alert-danger';
+        result.textContent = 'Import failed. See browser console for details.';
+        console.error('Import error:', err);
+    } finally {
+        result.style.display = 'block';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-upload me-1"></i>Import';
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Charts
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function loadProcessingStats() {
+    try {
+        const data = await getStats();
+        const canvas = document.getElementById('processing-stats-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (processingStatsChart) processingStatsChart.destroy();
+
+        const summary = data.processing_summary || {};
+        const labels  = Object.keys(summary);
+        const values  = Object.values(summary);
+
+        if (labels.length === 0) {
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No processing data', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        processingStatsChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
+                datasets: [{
+                    data: values,
+                    backgroundColor: ['#28a745', '#dc3545', '#ffc107', '#17a2b8'],
+                    borderWidth: 2, borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: {
+                        callbacks: {
+                            label(ctx) {
+                                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                return `${ctx.label}: ${ctx.parsed} (${((ctx.parsed / total) * 100).toFixed(1)}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Error loading processing stats:', err);
+    }
+}
+
+async function loadFileSizeDistribution() {
+    try {
+        const data   = await getSaves({ limit: 100 });
+        const canvas = document.getElementById('file-size-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (fileSizeChart) fileSizeChart.destroy();
+
+        if (!data.saves || data.saves.length === 0) {
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No file size data', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        const ranges = { '< 1 MB': 0, '1–10 MB': 0, '10–50 MB': 0, '50–100 MB': 0, '> 100 MB': 0 };
+        data.saves.forEach(s => {
+            const mb = (s.file_size || 0) / (1024 * 1024);
+            if      (mb < 1)   ranges['< 1 MB']++;
+            else if (mb < 10)  ranges['1–10 MB']++;
+            else if (mb < 50)  ranges['10–50 MB']++;
+            else if (mb < 100) ranges['50–100 MB']++;
+            else               ranges['> 100 MB']++;
+        });
+
+        fileSizeChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: Object.keys(ranges),
+                datasets: [{
+                    label: 'Files',
+                    data: Object.values(ranges),
+                    backgroundColor: '#36A2EB', borderColor: '#36A2EB', borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+            }
+        });
+    } catch (err) {
+        console.error('Error loading file size distribution:', err);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Utilities
+   ═══════════════════════════════════════════════════════════════════════════ */
 function escapeHtml(str) {
     if (str == null) return '';
     return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
-// Helper function for file size formatting (if not available globally)
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 </script>
 {% endblock %}

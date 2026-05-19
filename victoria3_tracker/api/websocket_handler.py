@@ -26,7 +26,6 @@ class WebSocketHandler:
         self.app = app
         self.db_manager = db_manager
         
-        # Initialize SocketIO
         self.socketio = SocketIO(
             app,
             cors_allowed_origins="*",
@@ -34,12 +33,10 @@ class WebSocketHandler:
             engineio_logger=False
         )
         
-        # Track connected clients
         self.connected_clients: Set[str] = set()
         self.client_subscriptions: Dict[str, Set[str]] = {}
         self.clients_lock = Lock()
         
-        # Setup event handlers
         self._setup_event_handlers()
         
         logger.info("WebSocket handler initialized")
@@ -58,7 +55,6 @@ class WebSocketHandler:
             
             logger.info(f"Client connected: {client_id}")
             
-            # Send welcome message with current stats
             try:
                 stats = self.db_manager.get_database_stats()
                 emit('welcome', {
@@ -105,7 +101,6 @@ class WebSocketHandler:
                     if client_id in self.client_subscriptions:
                         self.client_subscriptions[client_id].add(subscription_type)
                 
-                # Join appropriate room
                 join_room(subscription_type)
                 
                 emit('subscribed', {
@@ -134,7 +129,6 @@ class WebSocketHandler:
                     if client_id in self.client_subscriptions:
                         self.client_subscriptions[client_id].discard(subscription_type)
                 
-                # Leave room
                 leave_room(subscription_type)
                 
                 emit('unsubscribed', {
@@ -154,7 +148,6 @@ class WebSocketHandler:
             try:
                 stats = self.db_manager.get_database_stats()
                 
-                # Get latest save info
                 latest_save = self.db_manager.execute_query("""
                     SELECT save_id, filename, in_game_date, saved_at
                     FROM Saves
@@ -187,8 +180,7 @@ class WebSocketHandler:
                 'data': save_data,
                 'timestamp': datetime.now().isoformat()
             }
-            
-            # Broadcast to subscribers
+
             self.socketio.emit('new_save', message, room='new_saves')
             self.socketio.emit('update', message, room='all')
             
@@ -209,8 +201,7 @@ class WebSocketHandler:
                 'data': country_data,
                 'timestamp': datetime.now().isoformat()
             }
-            
-            # Broadcast to subscribers
+
             self.socketio.emit('country_update', message, room='country_updates')
             self.socketio.emit('update', message, room='all')
             
@@ -231,8 +222,7 @@ class WebSocketHandler:
                 'data': status_data,
                 'timestamp': datetime.now().isoformat()
             }
-            
-            # Broadcast to subscribers
+
             self.socketio.emit('processing_status', message, room='processing_status')
             self.socketio.emit('update', message, room='all')
             
@@ -253,8 +243,7 @@ class WebSocketHandler:
                 'data': metric_data,
                 'timestamp': datetime.now().isoformat()
             }
-            
-            # Broadcast to subscribers
+
             self.socketio.emit('metric_update', message, room='metric_updates')
             self.socketio.emit('update', message, room='all')
             

@@ -32,30 +32,26 @@ class WebServer:
         self.config = config
         self.db_manager = db_manager
         
-        # Load country name mapping
         self.country_names = self._load_country_names()
-        
-        # Create Flask app
+
         self.app = Flask(
             __name__,
             template_folder=str(Path(__file__).parent / 'templates'),
             static_folder=str(Path(__file__).parent / 'static')
         )
         
-        # Configure Flask app - use env var if set, otherwise generate a random key
         self.app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
         self.app.config['JSON_SORT_KEYS'] = False
         
-        # Initialize API
         self.api = Victoria3API(config, db_manager)
+
+        # Register all API routes directly onto our Flask app (avoids Blueprint
+        # method-set issues that could silently drop DELETE/POST routes in some
+        # Flask/Werkzeug version combinations).
+        self._register_api_routes()
         
-        # Register API blueprint
-        self.app.register_blueprint(self._create_api_blueprint(), url_prefix='/api')
-        
-        # Register web routes
         self._register_web_routes()
 
-        # Initialize WebSocket handler if enabled in config
         self.websocket_handler = None
         if self.config.get('enable_websocket', False):
             try:
@@ -84,7 +80,6 @@ class WebServer:
                         tag = row.get('Tag', '').strip().upper()
                         name = row.get('Main Alias', '').strip()
                         if tag and name:
-                            # Capitalize first letter of each word for display
                             display_name = ' '.join(word.capitalize() for word in name.split())
                             country_names[tag] = display_name
                 
@@ -112,28 +107,46 @@ class WebServer:
         tag_upper = country_tag.upper()
         return self.country_names.get(tag_upper, country_tag.upper())
     
-    def _create_api_blueprint(self):
-        """Create API blueprint from the Victoria3API app."""
-        from flask import Blueprint
-        
-        # Create blueprint and copy routes from API app
-        api_bp = Blueprint('api', __name__)
-        
-        # Copy all routes from the API app to the blueprint
+    def _register_api_routes(self):
+        """Register all Victoria3API routes directly on this Flask app.
+
+        Replaces the old Blueprint-copy approach.  That approach passed Flask's
+        auto-added OPTIONS/HEAD methods back into add_url_rule, which silently
+        dropped DELETE (and sometimes POST) routes in several Flask/Werkzeug
+        version combinations — causing the "Delete button does nothing" bug.
+
+        Direct add_url_rule with an explicit, filtered method set is reliable.
+        """
+        # Only copy these explicit HTTP verbs; Flask adds OPTIONS/HEAD itself.
+        PASSTHROUGH = {'GET', 'POST', 'PUT', 'PATCH', 'DELETE'}
+
+        registered = 0
         for rule in self.api.app.url_map.iter_rules():
-            if rule.endpoint != 'static':
-                # Get the view function
-                view_func = self.api.app.view_functions[rule.endpoint]
-                
-                # Add route to blueprint
-                api_bp.add_url_rule(
-                    rule.rule.replace('/api', ''),  # Remove /api prefix
-                    endpoint=rule.endpoint,
+            if rule.endpoint == 'static':
+                continue
+            view_func = self.api.app.view_functions.get(rule.endpoint)
+            if view_func is None:
+                continue
+            url = rule.rule  # already has /api prefix
+            if not url.startswith('/api'):
+                continue
+            methods = (rule.methods or set()) & PASSTHROUGH
+            if not methods:
+                continue
+            # Prefix endpoint name so it never clashes with WebServer's own routes.
+            web_endpoint = f'_api_{rule.endpoint}'
+            try:
+                self.app.add_url_rule(
+                    url,
+                    endpoint=web_endpoint,
                     view_func=view_func,
-                    methods=rule.methods
+                    methods=methods,
                 )
-        
-        return api_bp
+                registered += 1
+            except (AssertionError, ValueError) as exc:
+                logger.warning('API route skipped %s %s: %s', list(methods), url, exc)
+
+        logger.info('Registered %d API routes from Victoria3API', registered)
     
     def _register_web_routes(self):
         """Register web interface routes."""
@@ -147,7 +160,6 @@ class WebServer:
         def dashboard():
             """Main dashboard page."""
             try:
-                # Get basic stats for initial page load
                 stats = self.db_manager.get_database_stats()
 
                 return render_template('dashboard.html',
@@ -163,7 +175,6 @@ class WebServer:
         def countries():
             """Countries listing page."""
             try:
-                # Get countries for initial page load
                 countries_data = self._get_countries_data()
 
                 return render_template('countries.html',
@@ -179,7 +190,6 @@ class WebServer:
         def country_detail(country_tag):
             """Country detail page."""
             try:
-                # Get country summary
                 summary = self._get_country_summary(country_tag)
                 
                 if not summary:
@@ -204,10 +214,7 @@ class WebServer:
         def rankings():
             """Rankings page."""
             try:
-                # Get available metrics
                 metrics = self._get_available_metrics()
-                
-                # Get default rankings (GDP)
                 rankings_data = self._get_rankings_data('gdp')
                 
                 return render_template('rankings.html',
@@ -226,7 +233,6 @@ class WebServer:
         def saves():
             """Saves listing page."""
             try:
-                # Get processed saves
                 saves_data = self._get_saves_data()
                 
                 return render_template('saves.html',
@@ -242,13 +248,8 @@ class WebServer:
         def wars():
             """War statistics page."""
             try:
-                # Get initial war statistics for page load
                 war_stats = self._get_war_statistics_summary()
-                
-                # Get available countries for filtering
                 countries_data = self._get_countries_data()
-                
-                # Get available playthroughs
                 playthroughs = self._get_available_playthroughs()
                 
                 return render_template('wars.html',
@@ -274,8 +275,6 @@ class WebServer:
         def system_status():
             """System status page for monitoring."""
             try:
-                # This would need to be passed from the main application
-                # For now, just show basic database stats
                 db_stats = self.db_manager.get_database_stats()
                 
                 return render_template('status.html',
@@ -291,7 +290,6 @@ class WebServer:
         def configuration():
             """Configuration management page."""
             try:
-                # Get current configuration
                 current_config = {
                     'save_directory': self.config.get('save_directory'),
                     'web_port': self.config.get('web_port'),
@@ -303,7 +301,6 @@ class WebServer:
                     'enable_map_features': self.config.get('enable_map_features')
                 }
                 
-                # Get validation status
                 validation_status = self.config.validate_config()
                 
                 return render_template('config.html',
@@ -349,7 +346,6 @@ class WebServer:
 
         countries = []
 
-        # Prepend the virtual Global entry at the top
         latest_date_row = self.db_manager.execute_query(
             "SELECT MAX(in_game_date) as d FROM Saves", ()
         )
@@ -367,7 +363,6 @@ class WebServer:
         })
 
         for row in results:
-            # Use CSV mapping for display name, fallback to database name or tag
             display_name = self.get_country_display_name(row['country_tag'])
             if not display_name or display_name == row['country_tag'].upper():
                 display_name = row['name'] or row['country_tag']
@@ -427,7 +422,6 @@ class WebServer:
             latest_metrics = data_access.get_latest_metrics_for_country(country_tag)
 
             info = dict(country_info[0])
-            # Apply CSV name mapping for display
             display_name = self.get_country_display_name(country_tag)
             if display_name and display_name != country_tag.upper():
                 info['name'] = display_name
@@ -452,11 +446,8 @@ class WebServer:
         return {'rankings': rankings}
     
     def _get_saves_data(self):
-        """Get saves data for web pages."""
-        from ..database import DataAccessLayer
-        data_access = DataAccessLayer(self.db_manager)
-        saves = data_access.get_processed_saves(100)
-        return {'saves': saves}
+        """Saves are loaded client-side via /api/saves to keep initial page response fast."""
+        return {'saves': []}
     
     def _get_available_metrics(self):
         """Get available metrics."""
@@ -535,7 +526,6 @@ class WebServer:
         
         try:
             if self.websocket_handler:
-                # Use SocketIO server for real-time WebSocket support
                 logger.info("Starting with WebSocket support enabled")
                 self.websocket_handler.socketio.run(
                     self.app,
@@ -544,7 +534,6 @@ class WebServer:
                     debug=debug
                 )
             else:
-                # Use regular Flask server
                 self.app.run(
                     host=host,
                     port=port,

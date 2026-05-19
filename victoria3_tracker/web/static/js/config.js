@@ -13,13 +13,10 @@ class ConfigManager {
     }
     
     init() {
-        // Store original configuration on page load
         this.storeOriginalConfig();
-        
-        // Bind event handlers
+
         this.bindEvents();
-        
-        // Load current configuration
+
         this.loadCurrentConfig();
     }
     
@@ -46,34 +43,28 @@ class ConfigManager {
     }
     
     bindEvents() {
-        // Form submission
         const form = document.getElementById('config-form');
         if (form) {
             form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
-        
-        // Reset button
+
         const resetBtn = document.getElementById('reset-btn');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => this.resetForm());
         }
 
-        // Validate button
         const validateBtn = document.getElementById('validate-btn');
         if (validateBtn) {
             validateBtn.addEventListener('click', () => this.validateConfiguration());
         }
 
-        // Directory validation button
         const dirValidateBtn = document.getElementById('validate-dir-btn');
         if (dirValidateBtn) {
             dirValidateBtn.addEventListener('click', () => this.validateDirectory());
         }
-        
-        // Warn about unsaved changes
+
         window.addEventListener('beforeunload', (e) => this.handleBeforeUnload(e));
-        
-        // Form change detection
+
         const inputs = form.querySelectorAll('input, select');
         inputs.forEach(input => {
             input.addEventListener('change', () => this.detectChanges());
@@ -131,8 +122,7 @@ class ConfigManager {
     detectChanges() {
         const currentFormData = this.getFormData();
         const hasChanges = JSON.stringify(currentFormData) !== JSON.stringify(this.originalConfig);
-        
-        // Update UI to show unsaved changes
+
         const submitBtn = document.querySelector('button[type="submit"]');
         if (submitBtn) {
             if (hasChanges) {
@@ -158,8 +148,7 @@ class ConfigManager {
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         `;
         container.appendChild(alert);
-        
-        // Auto-remove after 5 seconds
+
         setTimeout(() => {
             if (alert.parentElement) {
                 alert.remove();
@@ -285,13 +274,11 @@ class ConfigManager {
             
             if (response.ok && result.success) {
                 this.showAlert('✅ Configuration saved successfully!', 'success');
-                
-                // Update original config
+
                 this.originalConfig = { ...config };
                 this.currentConfig = { ...config };
                 this.detectChanges();
-                
-                // Show restart notice if web port changed
+
                 if (config.web_port !== this.currentConfig.web_port) {
                     this.showAlert('⚠️ Web port changed. Please restart the application for changes to take effect.', 'warning');
                 }
@@ -318,7 +305,6 @@ class ConfigManager {
     }
 }
 
-// Initialize configuration manager when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('config-form')) {
         window.configManager = new ConfigManager();

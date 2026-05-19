@@ -187,7 +187,6 @@
         <p>Manage Victoria 3 Game Tracker settings and preferences</p>
     </div>
 
-    <!-- Validation Status -->
     <div class="config-section">
         <div class="validation-status">
             {% if validation_status %}
@@ -204,15 +203,12 @@
         </div>
     </div>
 
-    <!-- Alert Messages -->
     <div id="alert-container"></div>
 
-    <!-- Configuration Form -->
     <div class="config-section">
         <h2>Application Settings</h2>
         
         <form id="config-form" class="config-form">
-            <!-- Save Directory -->
             <div class="form-group">
                 <label for="save_directory">Victoria 3 Save Directory</label>
                 <div class="directory-browser">
@@ -229,7 +225,6 @@
                 </div>
             </div>
 
-            <!-- Web Port -->
             <div class="form-group">
                 <label for="web_port">Web Interface Port</label>
                 <input type="number" id="web_port" name="web_port" 
@@ -239,7 +234,6 @@
                 </div>
             </div>
 
-            <!-- Polling Interval -->
             <div class="form-group">
                 <label for="polling_interval">File Monitoring Interval (seconds)</label>
                 <input type="number" id="polling_interval" name="polling_interval" 
@@ -249,7 +243,6 @@
                 </div>
             </div>
 
-            <!-- Log Level -->
             <div class="form-group">
                 <label for="log_level">Log Level</label>
                 <select id="log_level" name="log_level" required>
@@ -264,7 +257,6 @@
                 </div>
             </div>
 
-            <!-- Max File Size -->
             <div class="form-group">
                 <label for="max_file_size_mb">Maximum File Size (MB)</label>
                 <input type="number" id="max_file_size_mb" name="max_file_size_mb" 
@@ -274,7 +266,6 @@
                 </div>
             </div>
 
-            <!-- Processing Timeout -->
             <div class="form-group">
                 <label for="processing_timeout_seconds">Processing Timeout (seconds)</label>
                 <input type="number" id="processing_timeout_seconds" name="processing_timeout_seconds" 
@@ -284,7 +275,6 @@
                 </div>
             </div>
 
-            <!-- WebSocket Enable -->
             <div class="form-group">
                 <div class="checkbox-group">
                     <input type="checkbox" id="enable_websocket" name="enable_websocket" 
@@ -296,7 +286,6 @@
                 </div>
             </div>
 
-            <!-- Map Features Enable -->
             <div class="form-group">
                 <div class="checkbox-group">
                     <input type="checkbox" id="enable_map_features" name="enable_map_features" 
@@ -308,7 +297,6 @@
                 </div>
             </div>
 
-            <!-- Default Country Count -->
             <div class="form-group">
                 <label for="default_country_count">Default Country Count for Trends</label>
                 <input type="number" id="default_country_count" name="default_country_count" 
@@ -318,7 +306,6 @@
                 </div>
             </div>
 
-            <!-- Form Actions -->
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">
                     <span class="loading">Saving...</span>
@@ -334,7 +321,6 @@
         </form>
     </div>
 
-    <!-- Configuration Help -->
     <div class="config-section">
         <h2>Configuration Help</h2>
         <div class="help-content">

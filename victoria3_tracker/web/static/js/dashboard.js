@@ -2,14 +2,12 @@
  * Dashboard-specific JavaScript for Victoria 3 Game Tracker
  */
 
-// Dashboard state
 let dashboardState = {
     charts: {},
     refreshIntervals: {},
     lastUpdate: null
 };
 
-// Initialize dashboard when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     initializeDashboard();
     setupEventHandlers();
@@ -22,10 +20,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeDashboard() {
     console.log('Initializing Victoria 3 Dashboard...');
     
-    // Load initial data
     loadDashboardData();
-    
-    // Initialize tooltips
     initializeTooltips();
 }
 
@@ -33,7 +28,6 @@ function initializeDashboard() {
  * Setup event handlers
  */
 function setupEventHandlers() {
-    // Metric selector changes
     const rankingMetric = document.getElementById('ranking-metric');
     if (rankingMetric) {
         rankingMetric.addEventListener('change', function() {
@@ -48,7 +42,6 @@ function setupEventHandlers() {
         });
     }
     
-    // Refresh buttons
     document.addEventListener('click', function(e) {
         if (e.target.matches('[data-refresh]')) {
             const refreshType = e.target.getAttribute('data-refresh');
@@ -56,7 +49,6 @@ function setupEventHandlers() {
         }
     });
     
-    // Window resize handler for charts
     window.addEventListener('resize', debounce(function() {
         resizeCharts();
     }, 250));
@@ -95,7 +87,6 @@ function updateStatsCards(data) {
         'total-metrics': data.database?.countrymetrics_count || 0
     };
     
-    // Update numeric values
     Object.entries(elements).forEach(([id, value]) => {
         const element = document.getElementById(id);
         if (element) {
@@ -103,7 +94,6 @@ function updateStatsCards(data) {
         }
     });
     
-    // Update latest date
     const latestDateElement = document.getElementById('latest-date');
     if (latestDateElement && data.latest_save) {
         latestDateElement.textContent = formatGameDate(data.latest_save.in_game_date);
@@ -254,7 +244,6 @@ function updateTrendsChart(data) {
     
     const ctx = canvas.getContext('2d');
     
-    // Destroy existing chart
     if (dashboardState.charts.trends) {
         dashboardState.charts.trends.destroy();
     }
@@ -378,12 +367,10 @@ function handleRefresh(type) {
  * Start auto-refresh intervals
  */
 function startAutoRefresh() {
-    // Refresh stats every 30 seconds
     dashboardState.refreshIntervals.stats = setInterval(() => {
         loadStats();
     }, 30000);
-    
-    // Refresh recent saves every 60 seconds
+
     dashboardState.refreshIntervals.saves = setInterval(() => {
         loadRecentSaves();
     }, 60000);
@@ -468,21 +455,15 @@ function getMetricIcon(metric) {
  * Handle WebSocket events
  */
 if (typeof addWebSocketHandler !== 'undefined') {
-    // New save processed
     addWebSocketHandler('new_save', function(data) {
         console.log('New save processed:', data);
-        
-        // Add to activity feed
         addActivityItem(`New save processed: ${data.filename}`, 'success');
-        
-        // Refresh relevant sections
         setTimeout(() => {
             loadStats();
             loadRecentSaves();
         }, 1000);
     });
     
-    // Processing status updates
     addWebSocketHandler('processing_status', function(data) {
         console.log('Processing status:', data);
         
@@ -495,13 +476,11 @@ if (typeof addWebSocketHandler !== 'undefined') {
         }
     });
     
-    // Country updates
     addWebSocketHandler('country_update', function(data) {
         console.log('Country update:', data);
         addActivityItem(`Country data updated: ${data.country_tag || 'Unknown'}`, 'info');
     });
     
-    // Metric updates
     addWebSocketHandler('metric_update', function(data) {
         console.log('Metric update:', data);
         addActivityItem(`Metric updated: ${data.metric_name || 'Unknown'}`, 'info');
@@ -536,7 +515,6 @@ function addActivityItem(message, type = 'info') {
         </div>
     `;
     
-    // Remove placeholder if it exists
     const placeholder = feed.querySelector('.text-muted.text-center');
     if (placeholder) {
         placeholder.remove();
@@ -544,21 +522,17 @@ function addActivityItem(message, type = 'info') {
     
     feed.insertBefore(item, feed.firstChild);
     
-    // Keep only last 10 items
     const items = feed.querySelectorAll('.alert');
     if (items.length > 10) {
         items[items.length - 1].remove();
     }
     
-    // Auto-scroll to top
     feed.scrollTop = 0;
 }
 
-// Cleanup on page unload
 window.addEventListener('beforeunload', function() {
     stopAutoRefresh();
-    
-    // Destroy charts
+
     Object.values(dashboardState.charts).forEach(chart => {
         if (chart && typeof chart.destroy === 'function') {
             chart.destroy();
@@ -566,7 +540,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-// Export functions for global use
 window.loadDashboardData = loadDashboardData;
 window.loadStats = loadStats;
 window.loadRecentSaves = loadRecentSaves;

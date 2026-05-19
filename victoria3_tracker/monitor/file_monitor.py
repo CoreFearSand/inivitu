@@ -30,8 +30,7 @@ class Victoria3SaveMonitor:
         self.callback = callback
         self.save_directory = save_directory
         self.autosave_path = save_directory / "autosave.v3"
-        
-        # Track the last known timestamp of autosave.v3
+
         self.last_autosave_timestamp: Optional[float] = None
         self.file_lock = threading.Lock()
         
@@ -59,24 +58,19 @@ class Victoria3SaveMonitor:
         try:
             if not self.autosave_path.exists():
                 return False
-            
-            # Get current file timestamp
+
             stat = self.autosave_path.stat()
             current_timestamp = stat.st_mtime
             
             with self.file_lock:
-                # Check if this is a new autosave
                 if (self.last_autosave_timestamp is None or 
                     current_timestamp > self.last_autosave_timestamp):
                     
-                    # Verify file is complete and stable
                     if self._is_file_complete(self.autosave_path):
                         logger.info(f"New autosave detected: {datetime.fromtimestamp(current_timestamp)}")
-                        
-                        # Update our tracked timestamp
+
                         self.last_autosave_timestamp = current_timestamp
-                        
-                        # Process the new autosave
+
                         try:
                             self.callback(self.autosave_path)
                             return True
@@ -102,17 +96,15 @@ class Victoria3SaveMonitor:
         try:
             if not file_path.exists():
                 return False
-            
-            # Check if file size is stable over a short period
+
             initial_size = file_path.stat().st_size
-            time.sleep(0.2)  # Brief pause to check stability
+            time.sleep(0.2)
             
             if not file_path.exists():
                 return False
             
             final_size = file_path.stat().st_size
-            
-            # File is complete if size is stable and > 0
+
             is_complete = initial_size == final_size and final_size > 0
             
             if not is_complete:
@@ -154,11 +146,9 @@ class FileMonitor:
         self.file_processor = file_processor
         self.processing_thread: Optional[threading.Thread] = None
         self.running = False
-        
-        # Victoria 3 specific monitor
+
         self.v3_monitor: Optional[Victoria3SaveMonitor] = None
-        
-        # Count existing files for status reporting
+
         self.existing_files_count = 0
         self._count_existing_files()
     
@@ -190,13 +180,12 @@ class FileMonitor:
             
             if not save_dir.is_dir():
                 raise NotADirectoryError(f"Save path is not a directory: {save_dir}")
-            
-            # Create Victoria 3 specific monitor
+
+
             self.v3_monitor = Victoria3SaveMonitor(self.file_processor, save_dir)
             
             self.running = True
-            
-            # Start monitoring thread
+
             self.processing_thread = threading.Thread(
                 target=self._monitoring_loop,
                 daemon=True,
@@ -216,19 +205,18 @@ class FileMonitor:
         while self.running:
             try:
                 if self.v3_monitor:
-                    # Check for new autosave
                     new_save_detected = self.v3_monitor.check_for_new_autosave()
                     
                     if new_save_detected:
                         logger.info("Successfully processed new autosave")
-                
-                # Sleep for polling interval
+
+
                 polling_interval = self.config.get("polling_interval", 5)
                 time.sleep(polling_interval)
                 
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {e}")
-                time.sleep(1)  # Brief pause before retrying
+                time.sleep(1)
     
     def stop(self):
         """Stop monitoring the save directory."""
@@ -237,8 +225,7 @@ class FileMonitor:
         
         logger.info("Stopping file monitor...")
         self.running = False
-        
-        # Stop monitoring thread
+
         if self.processing_thread and self.processing_thread.is_alive():
             try:
                 self.processing_thread.join(timeout=5)
@@ -264,8 +251,7 @@ class FileMonitor:
             'processed_files_count': self.existing_files_count,
             'monitoring_thread_alive': self.processing_thread.is_alive() if self.processing_thread else False
         }
-        
-        # Add Victoria 3 specific status
+
         if self.v3_monitor:
             status.update(self.v3_monitor.get_status())
         

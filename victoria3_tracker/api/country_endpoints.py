@@ -66,7 +66,6 @@ class CountryEndpoints:
                         'latest_metrics': latest_metrics,
                     })
 
-                # Get country info from most recent save
                 country_info = self.db_manager.execute_query("""
                     SELECT DISTINCT c.country_tag, c.name, c.is_player_country,
                            MAX(s.in_game_date) as latest_date,
@@ -82,7 +81,6 @@ class CountryEndpoints:
 
                 info = dict(country_info[0])
 
-                # Get playthroughs this country appears in
                 playthroughs = self.db_manager.execute_query("""
                     SELECT DISTINCT s.playthrough_id,
                            MIN(s.in_game_date) as start_date,
@@ -95,7 +93,6 @@ class CountryEndpoints:
                     ORDER BY end_date DESC
                 """, (country_tag,))
 
-                # Get latest metrics
                 latest_metrics = self.data_access.get_latest_metrics_for_country(country_tag)
 
                 return jsonify({

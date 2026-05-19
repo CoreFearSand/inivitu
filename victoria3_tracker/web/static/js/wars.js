@@ -5,13 +5,9 @@
  * battles table, timeline, country performance, and war detail modal.
  */
 
-// ─── Flag URL cache (tag → {url, alt}) populated from /api/countries ─────────
 const _warFlagUrls = {};
-
-// ─── War name cache (war_db_id → generated name string) ──────────────────────
 const _warNameCache = {};
 
-// ─── Page state ──────────────────────────────────────────────────────────────
 const warsState = {
     charts: {},
     currentFilters: {
@@ -29,13 +25,11 @@ const warsState = {
     // (country name lookup is handled by the shared V3CountryNames / getCountryName in api.js)
 };
 
-// ─── Colour palette shared between charts ────────────────────────────────────
 const CHART_COLORS = [
     '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF',
     '#FF9F40', '#C9CBCF', '#7CFC00', '#FF69B4', '#20B2AA'
 ];
 
-// ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
     initWarsPage();
 });
@@ -47,8 +41,6 @@ async function initWarsPage() {
     setupEventHandlers();
     await loadAllWarData();
 }
-
-// ─── Filter dropdowns ─────────────────────────────────────────────────────────
 
 async function loadPlaythroughs() {
     try {
@@ -69,14 +61,12 @@ async function loadPlaythroughs() {
 
 async function loadCountriesForFilter() {
     try {
-        // Main filter: uses Countries table (countries with metric data)
         const data = await apiRequest('/api/countries?limit=1000');
         const countrySelect = document.getElementById('country-select');
 
         const countries = data.countries || [];
         countries.sort((a, b) => getCountryName(a.country_tag).localeCompare(getCountryName(b.country_tag)));
 
-        // Populate flag URL cache for use in war/battle rows
         countries.forEach(c => {
             if (c.flag_url) {
                 _warFlagUrls[c.country_tag.toUpperCase()] = {
@@ -99,7 +89,6 @@ async function loadCountriesForFilter() {
         console.warn('Could not load countries for filter:', err);
     }
 
-    // Performance tab: sourced from WarParticipants — works even without metrics
     try {
         const perfSelect = document.getElementById('performance-country-select');
         if (!perfSelect) return;
@@ -132,8 +121,6 @@ async function loadCountriesForFilter() {
     }
 }
 
-// ─── Event handlers ──────────────────────────────────────────────────────────
-
 function setupEventHandlers() {
     document.getElementById('apply-filters')?.addEventListener('click', applyFilters);
     document.getElementById('refresh-data')?.addEventListener('click', loadAllWarData);
@@ -143,7 +130,6 @@ function setupEventHandlers() {
         if (this.value) loadCountryPerformance(this.value);
     });
 
-    // Lazy-load tab content on first show
     document.querySelectorAll('#war-tabs button[data-bs-toggle="tab"]').forEach(tab => {
         tab.addEventListener('shown.bs.tab', function (e) {
             const target = e.target.getAttribute('data-bs-target');
@@ -152,10 +138,7 @@ function setupEventHandlers() {
         });
     });
 
-    // Sortable headers — wars table (pass state object directly, not a string key)
     setupTableSort('wars-table', warsState.warsSort, renderWarsTable);
-
-    // Sortable headers — battles table
     setupTableSort('battles-table', warsState.battlesSort, renderBattlesTable);
 }
 
@@ -169,8 +152,6 @@ function applyFilters() {
 
     loadAllWarData();
 }
-
-// ─── Sort infrastructure ──────────────────────────────────────────────────────
 
 /**
  * Bind sort handlers to every th[data-sort] inside a table using onclick.
@@ -249,16 +230,12 @@ function sortData(arr, col, dir) {
     });
 }
 
-// ─── Master load function ─────────────────────────────────────────────────────
-
 async function loadAllWarData() {
     await Promise.all([
         loadWarStatsSummary(),
         loadWarsTable()
     ]);
 }
-
-// ─── Overview cards + charts ──────────────────────────────────────────────────
 
 async function loadWarStatsSummary() {
     try {
@@ -351,8 +328,6 @@ function renderWarCostChart(countries) {
     });
 }
 
-// ─── Wars table ───────────────────────────────────────────────────────────────
-
 async function loadWarsTable() {
     const tbody = document.getElementById('wars-table-body');
     if (!tbody) return;
@@ -376,12 +351,10 @@ async function loadWarsTable() {
                 _total_cost: (w.total_materiel_cost || 0) + (w.total_wage_cost || 0)
             }));
 
-        // Build war name cache for use by the battles table
         warsState.warsData.forEach(w => {
             if (w.war_db_id) _warNameCache[w.war_db_id] = generateWarName(w);
         });
 
-        // Restore sort icons if a column is already active (e.g. after filter re-apply)
         const ws = warsState.warsSort;
         if (ws.col) updateSortIcons('wars-table', ws.col, ws.dir);
         renderWarsTable();
@@ -463,7 +436,7 @@ function participantFlags(w) {
 }
 
 function createWarRow(w) {
-    const warLabel     = generateWarName(w);          // fancy generated name
+    const warLabel     = generateWarName(w);
     const rawType      = w.war_type || 'unknown';     // kept as subtitle
     const warDbId      = w.war_db_id || w.id || '';
     const casualties   = formatCasualties(w.total_casualties || 0);
@@ -492,13 +465,10 @@ function createWarRow(w) {
         </tr>`;
 }
 
-// ─── Battles table ────────────────────────────────────────────────────────────
-
 async function loadBattles() {
     const tbody = document.getElementById('battles-table-body');
     if (!tbody) return;
 
-    // Only fetch if we haven't cached data yet (or filters changed)
     if (warsState.battlesData.length === 0) {
         tbody.innerHTML = tableSpinnerHTML(8);
 
@@ -510,7 +480,6 @@ async function loadBattles() {
             const qs = new URLSearchParams(params).toString();
             const data = await apiRequest(`/api/battles?${qs}`);
 
-            // Pre-compute derived sort key
             warsState.battlesData = (data.battles || []).map(b => ({
                 ...b,
                 _total_casualties: (b.attacker_casualties || 0) + (b.defender_casualties || 0)
@@ -564,8 +533,6 @@ function createBattleRow(b) {
             <td><small class="text-muted">${warLabel}</small></td>
         </tr>`;
 }
-
-// ─── Timeline ─────────────────────────────────────────────────────────────────
 
 async function loadTimeline() {
     const container = document.getElementById('war-timeline');

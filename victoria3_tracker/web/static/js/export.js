@@ -17,18 +17,14 @@ function exportToCSV(data, filename, columns = null) {
     try {
         let csv = '';
         
-        // Determine columns
         const cols = columns || Object.keys(data[0]);
-        
-        // Add header row
+
         csv += cols.map(col => `"${col}"`).join(',') + '\n';
-        
-        // Add data rows
+
         data.forEach(row => {
             const values = cols.map(col => {
                 let value = row[col];
-                
-                // Handle different data types
+
                 if (value === null || value === undefined) {
                     value = '';
                 } else if (typeof value === 'object') {
@@ -36,15 +32,13 @@ function exportToCSV(data, filename, columns = null) {
                 } else {
                     value = String(value);
                 }
-                
-                // Escape quotes and wrap in quotes
+
                 return `"${value.replace(/"/g, '""')}"`;
             });
-            
+
             csv += values.join(',') + '\n';
         });
-        
-        // Create and download file
+
         downloadFile(csv, filename, 'text/csv');
         
         showAlert(`Exported ${data.length} records to ${filename}`, 'success');
@@ -105,16 +99,13 @@ function exportChartData(chart, filename, format = 'csv') {
                 }))
             }, filename);
         } else {
-            // Convert to CSV format
             const csvData = [];
-            
-            // Create header
+
             const header = ['Label'];
             datasets.forEach(dataset => {
                 header.push(dataset.label || 'Dataset');
             });
-            
-            // Create rows
+
             labels.forEach((label, index) => {
                 const row = { Label: label };
                 datasets.forEach(dataset => {
@@ -158,7 +149,6 @@ async function exportRankings(metric, format = 'csv') {
                 rankings: data.rankings
             }, filename);
         } else {
-            // Prepare CSV data
             const csvData = data.rankings.map((country, index) => ({
                 'Rank': index + 1,
                 'Country Tag': country.country_tag,
@@ -211,7 +201,6 @@ async function exportCountryMetrics(countryTag, metric = null, format = 'csv') {
             let csvData;
             
             if (metric) {
-                // Single metric export
                 csvData = data.metrics.map(entry => ({
                     'Country': countryTag,
                     'Metric': metric,
@@ -220,7 +209,6 @@ async function exportCountryMetrics(countryTag, metric = null, format = 'csv') {
                     'Game Date': entry.in_game_date
                 }));
             } else {
-                // All metrics export
                 csvData = data.latest_metrics.map(entry => ({
                     'Country': countryTag,
                     'Metric': entry.metric_name,
@@ -308,7 +296,6 @@ async function exportTrends(metric, format = 'csv') {
                 trends: data.trends
             }, filename);
         } else {
-            // Convert trends to CSV format
             const csvData = [];
             
             Object.entries(data.trends).forEach(([countryTag, countryData]) => {
@@ -351,7 +338,6 @@ function downloadFile(content, filename, mimeType) {
     link.click();
     document.body.removeChild(link);
     
-    // Clean up
     window.URL.revokeObjectURL(url);
 }
 
@@ -422,16 +408,13 @@ function showExportModal(dataType, options = {}) {
         </div>
     `;
     
-    // Remove existing modal
     const existingModal = document.getElementById('exportModal');
     if (existingModal) {
         existingModal.remove();
     }
-    
-    // Add new modal
+
     document.body.insertAdjacentHTML('beforeend', modalHtml);
-    
-    // Show modal
+
     const modal = new bootstrap.Modal(document.getElementById('exportModal'));
     modal.show();
 }
@@ -445,11 +428,9 @@ function executeExport(dataType, options) {
     const format = document.querySelector('input[name="exportFormat"]:checked').value;
     const metric = document.getElementById('exportMetric')?.value;
     
-    // Close modal
     const modal = bootstrap.Modal.getInstance(document.getElementById('exportModal'));
     modal.hide();
-    
-    // Execute appropriate export function
+
     switch (dataType) {
         case 'rankings':
             exportRankings(metric || options.metric || 'gdp', format);
@@ -468,7 +449,6 @@ function executeExport(dataType, options) {
     }
 }
 
-// Export functions for global use
 window.exportToCSV = exportToCSV;
 window.exportToJSON = exportToJSON;
 window.exportChartData = exportChartData;

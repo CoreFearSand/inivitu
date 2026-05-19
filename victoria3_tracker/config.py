@@ -46,7 +46,6 @@ class ConfigManager:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
                 
-                # Merge with defaults to ensure all keys exist
                 self.config = {**self.DEFAULT_CONFIG, **loaded_config}
                 logger.info(f"Configuration loaded from {self.config_path}")
                 
@@ -76,22 +75,18 @@ class ConfigManager:
         """
         errors = []
         
-        # Validate save directory
         save_dir = Path(self.config["save_directory"])
         if not save_dir.exists():
             errors.append(f"Save directory does not exist: {save_dir}")
         elif not save_dir.is_dir():
             errors.append(f"Save directory path is not a directory: {save_dir}")
         
-        # Validate rakaly executable
         rakaly_path = Path(self.config["rakaly_path"])
         if not rakaly_path.exists():
-            # Check if rakaly is in PATH
             import shutil
             if not shutil.which("rakaly") and not shutil.which("rakaly.exe"):
                 errors.append(f"rakaly.exe not found at {rakaly_path} or in PATH")
         
-        # Validate numeric values
         if not isinstance(self.config["web_port"], int) or not (1 <= self.config["web_port"] <= 65535):
             errors.append("web_port must be an integer between 1 and 65535")
         
@@ -107,7 +102,6 @@ class ConfigManager:
         if not isinstance(self.config["default_country_count"], int) or not (1 <= self.config["default_country_count"] <= 50):
             errors.append("default_country_count must be an integer between 1 and 50")
         
-        # Log validation results
         if errors:
             for error in errors:
                 logger.error(f"Configuration validation error: {error}")
@@ -159,20 +153,16 @@ class ConfigManager:
         Returns:
             True if update successful and validation passed
         """
-        # Create temporary config for validation
         temp_config = {**self.config, **updates}
         original_config = self.config.copy()
         
-        # Apply updates temporarily
         self.config = temp_config
         
-        # Validate
         if self.validate_config():
             self._save_config()
             logger.info(f"Configuration updated: {list(updates.keys())}")
             return True
         else:
-            # Restore original config
             self.config = original_config
             logger.error("Configuration update failed validation")
             return False

@@ -2,11 +2,9 @@
  * Countries-specific JavaScript for Victoria 3 Game Tracker
  */
 
-// Country picker state
 let _pickerData = [];
 const _pickerSelected = new Set();
 
-// Country detail state
 let countryState = {
     charts: {},
     currentPlaythrough: null,
@@ -20,7 +18,6 @@ function fmtIgType(raw) {
         .replace(/\w/g, c => c.toUpperCase());
 }
 
-// Victoria 3 canonical IG colors
 const IG_COLORS = {
     ig_landowners:        '#7B4F9E',
     ig_rural_folk:        '#4CAF50',
@@ -35,7 +32,6 @@ function igColor(igType) { return IG_COLORS[igType] || '#888888'; }
 
 
 
-// Initialize country detail page when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     if (typeof window.countryData !== 'undefined') {
         initializeCountryDetail();
@@ -50,7 +46,6 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeCountryDetail() {
     console.log('Initializing Country Detail for:', window.countryData.tag);
 
-    // Hide tabs that don't apply to the Global (D99) aggregate country
     if (window.countryData.isGlobal) {
         ['interest-groups-tab', 'laws-tab'].forEach(function(id) {
             const el = document.getElementById(id);
@@ -58,13 +53,8 @@ function initializeCountryDetail() {
         });
     }
 
-    // Setup chart configurations
     setupChartDefaults();
-
-    // Initialize tooltips
     initializeTooltips();
-
-    // Load playthrough options
     loadPlaythroughOptions();
 }
 
@@ -72,7 +62,6 @@ function initializeCountryDetail() {
  * Setup event handlers
  */
 function setupEventHandlers() {
-    // Playthrough selection change
     const playthroughSelect = document.getElementById('playthrough-select');
     if (playthroughSelect) {
         playthroughSelect.addEventListener('change', function() {
@@ -81,7 +70,6 @@ function setupEventHandlers() {
         });
     }
     
-    // Metric selector changes
     const economicMetric = document.getElementById('economic-metric-select');
     if (economicMetric) {
         economicMetric.addEventListener('change', function() {
@@ -112,7 +100,6 @@ function setupEventHandlers() {
         });
     }
     
-    // Refresh and export buttons
     document.addEventListener('click', function(e) {
         if (e.target.matches('#refresh-data') || e.target.closest('#refresh-data')) {
             handleRefresh();
@@ -127,13 +114,11 @@ function setupEventHandlers() {
         }
     });
     
-    // Tab change handlers
     document.addEventListener('shown.bs.tab', function(e) {
         const targetId = e.target.getAttribute('data-bs-target');
         handleTabChange(targetId);
     });
     
-    // Window resize handler for charts
     window.addEventListener('resize', debounce(function() {
         resizeCharts();
     }, 250));
@@ -149,7 +134,6 @@ async function loadPlaythroughOptions() {
     try {
         const data = await getPlaythroughs();
         
-        // Clear existing options except "All Playthroughs"
         playthroughSelect.innerHTML = '<option value="">All Playthroughs</option>';
         
         if (data.playthroughs && data.playthroughs.length > 0) {
@@ -210,10 +194,8 @@ function updateMetricsCards(data) {
             const latestValue = metricData.latest_value;
             const change = metricData.change_percent;
             
-            // Update value
             valueElement.textContent = formatNumber(latestValue);
-            
-            // Update change indicator
+
             if (changeElement && change !== null && change !== undefined) {
                 const changeText = change > 0 ? `+${change.toFixed(1)}%` : `${change.toFixed(1)}%`;
                 changeElement.textContent = changeText;
@@ -297,13 +279,13 @@ function createMetricTableRow(metric, metricData) {
 async function loadEconomicChart(metric = 'gdp') {
     const canvas = document.getElementById('economic-chart');
     if (!canvas) return;
-    
+
     try {
         const params = countryState.currentPlaythrough ? { playthrough_id: countryState.currentPlaythrough } : {};
-        const data = await getCountryMetrics(window.countryData.tag, { ...params, metric, history: true });
-        
+        const data = await getCountryMetrics(window.countryData.tag, { ...params, metric, limit: 500 });
+
         updateChart('economic', data, metric);
-        
+
     } catch (error) {
         console.error('Error loading economic chart:', error);
         showAlert('Failed to load economic chart', 'danger');
@@ -316,13 +298,13 @@ async function loadEconomicChart(metric = 'gdp') {
 async function loadSocialChart(metric = 'population') {
     const canvas = document.getElementById('social-chart');
     if (!canvas) return;
-    
+
     try {
         const params = countryState.currentPlaythrough ? { playthrough_id: countryState.currentPlaythrough } : {};
-        const data = await getCountryMetrics(window.countryData.tag, { ...params, metric, history: true });
-        
+        const data = await getCountryMetrics(window.countryData.tag, { ...params, metric, limit: 500 });
+
         updateChart('social', data, metric);
-        
+
     } catch (error) {
         console.error('Error loading social chart:', error);
         showAlert('Failed to load social chart', 'danger');
@@ -335,13 +317,13 @@ async function loadSocialChart(metric = 'population') {
 async function loadHistoryChart(metric = 'gdp') {
     const canvas = document.getElementById('history-chart');
     if (!canvas) return;
-    
+
     try {
         const params = countryState.currentPlaythrough ? { playthrough_id: countryState.currentPlaythrough } : {};
-        const data = await getCountryMetrics(window.countryData.tag, { ...params, metric, history: true });
-        
+        const data = await getCountryMetrics(window.countryData.tag, { ...params, metric, limit: 500 });
+
         updateChart('history', data, metric);
-        
+
     } catch (error) {
         console.error('Error loading history chart:', error);
         showAlert('Failed to load history chart', 'danger');
@@ -357,18 +339,22 @@ function updateChart(chartType, data, metric) {
     
     const ctx = canvas.getContext('2d');
     
-    // Destroy existing chart
     if (countryState.charts[chartType]) {
         countryState.charts[chartType].destroy();
     }
     
-    const chartData = [];
+    // Use category scale so every save gets equal horizontal space regardless
+    // of the real time gap between saves.  With type:'time' (proportional),
+    // unevenly-spaced saves compress clustered points to one edge, making part
+    // of the line invisible.
+    const chartLabels = [];
+    const chartValues = [];
     if (data.history && data.history.length > 0) {
         data.history.forEach(point => {
-            chartData.push({
-                x: point.date,
-                y: point.value
-            });
+            if (point.date && point.value != null) {
+                chartLabels.push(point.date);   // 'YYYY-MM-DD'
+                chartValues.push(point.value);
+            }
         });
     }
 
@@ -378,9 +364,10 @@ function updateChart(chartType, data, metric) {
     countryState.charts[chartType] = new Chart(ctx, {
         type: 'line',
         data: {
+            labels: chartLabels,
             datasets: [{
                 label: `${window.countryData.name} - ${metricName}`,
-                data: chartData,
+                data: chartValues,
                 borderColor: '#007bff',
                 backgroundColor: '#007bff20',
                 fill: true,
@@ -398,17 +385,19 @@ function updateChart(chartType, data, metric) {
             },
             scales: {
                 x: {
-                    type: 'time',
-                    time: {
-                        parser: 'yyyy-MM-dd',
-                        displayFormats: {
-                            day: 'MMM dd',
-                            month: 'MMM yyyy'
-                        }
-                    },
+                    // Category scale — equal spacing per save point.
                     title: {
                         display: true,
                         text: 'Date'
+                    },
+                    ticks: {
+                        maxTicksLimit: 8,
+                        maxRotation: 30,
+                        // Show only YYYY-MM so labels don't crowd each other.
+                        callback: function(val, index) {
+                            const label = chartLabels[index];
+                            return label ? label.slice(0, 7) : '';
+                        }
                     }
                 },
                 y: {
@@ -430,6 +419,11 @@ function updateChart(chartType, data, metric) {
                 },
                 tooltip: {
                     callbacks: {
+                        // Show full date in tooltip title.
+                        title: function(contexts) {
+                            const idx = contexts[0]?.dataIndex;
+                            return chartLabels[idx] || '';
+                        },
                         label: function(context) {
                             return `${context.dataset.label}: ${formatNumber(context.parsed.y)}`;
                         }
@@ -460,14 +454,12 @@ async function loadRankings(metric = 'gdp') {
             const rankings = data.rankings;
             const currentIdx = rankings.findIndex(c => c.country_tag === window.countryData.tag);
 
-            // Always render top 5
             rankings.slice(0, 5).forEach((country, index) => {
                 const isCurrent = country.country_tag === window.countryData.tag;
                 html += createRankingTableRow(country, index, isCurrent);
             });
 
             if (currentIdx >= 5) {
-                // Separator row
                 html += `<tr><td colspan="4" class="text-center text-muted py-1" style="letter-spacing:2px;">···</td></tr>`;
                 html += createRankingTableRow(rankings[currentIdx], currentIdx, true);
             } else if (currentIdx === -1) {
@@ -617,7 +609,6 @@ async function loadIgChart(field) {
 
         const isClout = field === 'clout';
 
-        // Build one dataset per IG type
         const datasets = Object.entries(series).map(([igType, points]) => {
             const color = igColor(igType);
             return {
@@ -642,10 +633,12 @@ async function loadIgChart(field) {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                clip: 0,
                 interaction: { mode: 'index', intersect: false },
                 scales: {
                     x: {
                         type: 'time',
+                        bounds: 'data',
                         time: {
                             parser: 'yyyy-MM-dd',
                             displayFormats: { year: 'yyyy', month: 'MMM yyyy' }
@@ -695,8 +688,6 @@ async function loadComparisonData() {
     }
 }
 
-// ── Searchable country picker ─────────────────────────────────────────────
-
 function initCountryPicker(countries) {
     _pickerData = countries
         .filter(c => c.country_tag !== window.countryData.tag)
@@ -721,7 +712,6 @@ function initCountryPicker(countries) {
     });
     box.addEventListener('click', () => input.focus());
 
-    // Close dropdown when clicking outside
     document.addEventListener('mousedown', function pickerClose(e) {
         const wrapper = document.getElementById('country-picker-box')?.parentElement;
         if (wrapper && !wrapper.contains(e.target)) {
@@ -900,10 +890,12 @@ function renderComparisonChart(data, metric) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            clip: 0,
             interaction: { mode: 'index', intersect: false },
             scales: {
                 x: {
                     type: 'time',
+                    bounds: 'data',
                     time: {
                         parser: 'yyyy-MM-dd',
                         displayFormats: { day: 'MMM dd', month: 'MMM yyyy' }
@@ -939,7 +931,6 @@ function handleRefresh() {
  * Handle compare action
  */
 function handleCompare() {
-    // Switch to comparison tab
     const comparisonTab = document.getElementById('comparison-tab');
     if (comparisonTab) {
         const tab = new bootstrap.Tab(comparisonTab);
@@ -968,14 +959,11 @@ function resizeCharts() {
     });
 }
 
-// Cleanup on page unload
 window.addEventListener('beforeunload', function() {
-    // Stop any refresh intervals
     Object.values(countryState.refreshIntervals).forEach(interval => {
         clearInterval(interval);
     });
-    
-    // Destroy charts
+
     Object.values(countryState.charts).forEach(chart => {
         if (chart && typeof chart.destroy === 'function') {
             chart.destroy();
@@ -983,7 +971,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-// Export functions for global use
 window.loadCountryData = loadCountryData;
 window.loadMetricsOverview = loadMetricsOverview;
 window.loadMetricsTable = loadMetricsTable;
@@ -994,8 +981,6 @@ window.loadRankings = loadRankings;
 window.loadPlaythroughOptions = loadPlaythroughOptions;
 window.runComparison = runComparison;
 window.renderComparisonChart = renderComparisonChart;
-
-// ── Law Timeline ──────────────────────────────────────────────────────────
 
 /** State for the law timeline — reset when playthrough changes. */
 let _lawState = {
@@ -1018,7 +1003,6 @@ async function loadLawsTimeline() {
     const container = document.getElementById('laws-timeline-container');
     if (!container) return;
 
-    // Reset on playthrough change
     if (_lawState.loaded && _lawState.playthrough !== countryState.currentPlaythrough) {
         _lawState.loaded = false;
     }
@@ -1067,7 +1051,6 @@ async function loadLawsTimeline() {
             });
         }
 
-        // Build lookup structures
         const byDate = {};
         changes.forEach(function(c) {
             if (!c.activation_date) return;
@@ -1117,7 +1100,6 @@ function _renderLawTimeline(container) {
     const startDate = sortedDates[0];
     const endDate   = sortedDates[sortedDates.length - 1];
 
-    // Build marker HTML (one column per unique date)
     const markersHtml = sortedDates.map(function(d) {
         const list = byDate[d];
         const pct  = totalMs > 0 ? ((new Date(d).getTime() - startNum) / totalMs * 100) : 0;
@@ -1140,7 +1122,6 @@ function _renderLawTimeline(container) {
     const currentMs = new Date(currentDate).getTime();
     const initialVal = totalMs > 0 ? Math.round((currentMs - startNum) / totalMs * steps) : steps;
 
-    // Unknown mod-law banner
     const unknownKeys = _lawState.unknownLawKeys || [];
     const unknownBannerHtml = unknownKeys.length
         ? '<div class="alert alert-warning d-flex gap-2 align-items-start mb-3" role="alert">' +
@@ -1219,7 +1200,6 @@ function _renderLawState() {
         }
     });
 
-    // Organise into categories in canonical LAW_GROUPS order
     const CATEGORY_ORDER = ['power_structure', 'economy', 'human_rights'];
     const catData = {
         power_structure: { label: 'Power Structure', icon: 'fa-landmark',      groups: [] },

@@ -11,12 +11,9 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-# Core schema SQL statements
 SCHEMA_SQL = """
--- Enable foreign key constraints
 PRAGMA foreign_keys = ON;
 
--- Saves table: Master record for each processed save file
 CREATE TABLE IF NOT EXISTS Saves (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     save_id TEXT NOT NULL UNIQUE,
@@ -33,7 +30,6 @@ CREATE TABLE IF NOT EXISTS Saves (
     CONSTRAINT valid_filename CHECK (filename LIKE '%.v3')
 );
 
--- Countries table: Nation definitions per save
 CREATE TABLE IF NOT EXISTS Countries (
     country_id INTEGER PRIMARY KEY AUTOINCREMENT,
     country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
@@ -45,7 +41,6 @@ CREATE TABLE IF NOT EXISTS Countries (
     UNIQUE(country_tag, save_id)
 );
 
--- Metric Types: Predefined list of valid metrics
 CREATE TABLE IF NOT EXISTS MetricTypes (
     metric_type_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -56,7 +51,6 @@ CREATE TABLE IF NOT EXISTS MetricTypes (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Country Metrics: Time-series data with strict validation
 CREATE TABLE IF NOT EXISTS CountryMetrics (
     metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
     country_id INTEGER NOT NULL,
@@ -72,7 +66,6 @@ CREATE TABLE IF NOT EXISTS CountryMetrics (
     UNIQUE(country_id, metric_type_id, recorded_at)
 );
 
--- Wars table: Military conflicts tracked across a playthrough
 CREATE TABLE IF NOT EXISTS Wars (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     save_war_id TEXT NOT NULL,           -- numeric war ID from save file
@@ -98,7 +91,6 @@ CREATE TABLE IF NOT EXISTS Wars (
     UNIQUE(save_war_id, playthrough_id)  -- one war record per playthrough
 );
 
--- War Participants: Countries involved in a war with their statistics
 CREATE TABLE IF NOT EXISTS WarParticipants (
     participant_id INTEGER PRIMARY KEY AUTOINCREMENT,
     war_id INTEGER NOT NULL,             -- references Wars.id
@@ -115,7 +107,6 @@ CREATE TABLE IF NOT EXISTS WarParticipants (
     UNIQUE(war_id, country_tag)
 );
 
--- Battles: Individual battle records from battle_manager
 CREATE TABLE IF NOT EXISTS Battles (
     battle_id TEXT PRIMARY KEY NOT NULL,  -- composite key built from war_id + battle index
     war_id INTEGER NOT NULL,              -- references Wars.id
@@ -137,7 +128,6 @@ CREATE TABLE IF NOT EXISTS Battles (
     CONSTRAINT different_combatants CHECK (attacker_tag != defender_tag)
 );
 
--- Interest Groups: Political factions per country per save
 CREATE TABLE IF NOT EXISTS InterestGroups (
     ig_id INTEGER PRIMARY KEY AUTOINCREMENT,
     country_id INTEGER NOT NULL,
@@ -153,7 +143,6 @@ CREATE TABLE IF NOT EXISTS InterestGroups (
     UNIQUE(country_id, save_id, ig_type)
 );
 
--- Processing Log: Track file processing history and errors
 CREATE TABLE IF NOT EXISTS ProcessingLog (
     log_id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL,
@@ -166,7 +155,6 @@ CREATE TABLE IF NOT EXISTS ProcessingLog (
     FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE SET NULL
 );
 
--- Optional: Territories table for map visualization
 CREATE TABLE IF NOT EXISTS Territories (
     territory_id INTEGER PRIMARY KEY AUTOINCREMENT,
     province_id TEXT NOT NULL,
@@ -183,7 +171,6 @@ CREATE TABLE IF NOT EXISTS Territories (
 );
 
 
--- Country Laws: Historical law changes per country per playthrough
 CREATE TABLE IF NOT EXISTS CountryLaws (
     law_id INTEGER PRIMARY KEY AUTOINCREMENT,
     country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
@@ -202,7 +189,6 @@ CREATE TABLE IF NOT EXISTS CountryLaws (
     UNIQUE(country_tag, playthrough_id, law_key, activation_date)
 );
 
--- Optional: Territory borders for map rendering
 CREATE TABLE IF NOT EXISTS TerritoryBorders (
     border_id INTEGER PRIMARY KEY AUTOINCREMENT,
     province_id TEXT NOT NULL,
@@ -212,9 +198,7 @@ CREATE TABLE IF NOT EXISTS TerritoryBorders (
 );
 """
 
-# Performance indexes
 INDEXES_SQL = """
--- Performance indexes
 CREATE INDEX IF NOT EXISTS idx_saves_playthrough_id ON Saves(playthrough_id);
 CREATE INDEX IF NOT EXISTS idx_countries_save_id ON Countries(save_id);
 CREATE INDEX IF NOT EXISTS idx_countries_tag ON Countries(country_tag);
@@ -235,15 +219,12 @@ CREATE INDEX IF NOT EXISTS idx_interest_groups_save_id ON InterestGroups(save_id
 CREATE INDEX IF NOT EXISTS idx_country_laws_tag_playthrough ON CountryLaws(country_tag, playthrough_id);
 CREATE INDEX IF NOT EXISTS idx_country_laws_activation_date ON CountryLaws(activation_date);
 
--- Optional indexes for map features
 CREATE INDEX IF NOT EXISTS idx_territories_save_id ON Territories(save_id);
 CREATE INDEX IF NOT EXISTS idx_territories_country_id ON Territories(country_id);
 CREATE INDEX IF NOT EXISTS idx_territories_province_id ON Territories(province_id);
 """
 
-# Views for common queries
 VIEWS_SQL = """
--- Latest metrics per country
 CREATE VIEW IF NOT EXISTS LatestCountryMetrics AS
 SELECT 
     c.country_tag,
@@ -265,7 +246,6 @@ WHERE cm.recorded_at = (
     AND cm2.metric_type_id = cm.metric_type_id
 );
 
--- Active wars with participant counts
 CREATE VIEW IF NOT EXISTS ActiveWars AS
 SELECT
     w.id,
@@ -283,7 +263,6 @@ LEFT JOIN WarParticipants wp ON w.id = wp.war_id
 WHERE w.status = 'ongoing'
 GROUP BY w.id;
 
--- Country rankings by metric
 CREATE VIEW IF NOT EXISTS CountryRankings AS
 SELECT 
     c.country_tag,
@@ -297,7 +276,6 @@ JOIN Countries c ON cm.country_id = c.country_id
 JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id;
 """
 
-# Default metric types to insert
 DEFAULT_METRIC_TYPES = [
     ('gdp', 'GDP', '£', 'Gross Domestic Product'),
     ('weekly_income', 'Weekly Income', '£/week', 'Government weekly income'),
@@ -326,19 +304,15 @@ def create_schema(connection: sqlite3.Connection) -> None:
     try:
         cursor = connection.cursor()
         
-        # Execute schema creation
         logger.info("Creating database schema...")
         cursor.executescript(SCHEMA_SQL)
-        
-        # Create indexes
+
         logger.info("Creating database indexes...")
         cursor.executescript(INDEXES_SQL)
-        
-        # Create views
+
         logger.info("Creating database views...")
         cursor.executescript(VIEWS_SQL)
-        
-        # Insert default metric types
+
         logger.info("Inserting default metric types...")
         cursor.executemany(
             """INSERT OR IGNORE INTO MetricTypes (name, display_name, unit, description) 
@@ -366,7 +340,6 @@ def verify_schema(connection: sqlite3.Connection) -> bool:
     try:
         cursor = connection.cursor()
         
-        # Check that all required tables exist
         required_tables = [
             'Saves', 'Countries', 'MetricTypes', 'CountryMetrics',
             'Wars', 'WarParticipants', 'Battles', 'ProcessingLog',
@@ -381,14 +354,12 @@ def verify_schema(connection: sqlite3.Connection) -> bool:
             logger.error(f"Missing tables: {missing_tables}")
             return False
         
-        # Check that metric types are populated
         cursor.execute("SELECT COUNT(*) FROM MetricTypes")
         metric_count = cursor.fetchone()[0]
         if metric_count == 0:
             logger.error("MetricTypes table is empty")
             return False
         
-        # Check foreign key constraints are enabled
         cursor.execute("PRAGMA foreign_keys")
         fk_enabled = cursor.fetchone()[0]
         if not fk_enabled:
@@ -587,7 +558,6 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
 
             PRAGMA foreign_keys = ON;
         """)
-        # Recreate indexes that were on CountryMetrics
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_metrics_country_date ON CountryMetrics(country_id, recorded_at)",
             "CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON CountryMetrics(metric_type_id, recorded_at)",
@@ -603,7 +573,6 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     cursor.execute(
         "UPDATE MetricTypes SET is_active = FALSE WHERE name = 'debt'"
     )
-    # Update money_holding display name to reflect net treasury
     cursor.execute("""
         UPDATE MetricTypes
         SET display_name = 'Net Treasury',

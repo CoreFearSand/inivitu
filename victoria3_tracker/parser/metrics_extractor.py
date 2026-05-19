@@ -31,7 +31,6 @@ class CountryMetrics:
 class MetricsExtractor:
     """Extracts game metrics from parsed Victoria 3 save data."""
     
-    # Define the core metrics we extract
     CORE_METRICS = {
         'gdp': 'GDP',
         'weekly_income': 'Weekly Income',
@@ -76,30 +75,25 @@ class MetricsExtractor:
         country_metrics_list = []
         
         try:
-            # Get country data
             country_manager = parsed_data.get('country_manager', {})
             countries_db = country_manager.get('database', {})
-            
+
             if not countries_db:
                 logger.warning("No country data found in save file")
                 return country_metrics_list
-            
-            # Get player country
+
             player_country = parsed_data.get('meta_data', {}).get('name', '')
-            
+
             logger.info(f"Extracting metrics for {len(countries_db)} countries")
-            
-            # Process each country
+
             for country_id, country_data in countries_db.items():
                 try:
                     self.extraction_stats['countries_processed'] += 1
                     
-                    # Skip if country_data is not a dictionary
                     if not isinstance(country_data, dict):
                         logger.warning(f"Invalid country data for ID {country_id}: {type(country_data)}")
                         continue
                     
-                    # Get the actual country tag from the "definition" field
                     country_tag = country_data.get('definition')
                     if not country_tag:
                         logger.warning(f"No definition field found for country ID {country_id}")
@@ -112,10 +106,8 @@ class MetricsExtractor:
                         logger.warning(f"Invalid country tag: {country_tag!r}")
                         continue
                     
-                    # Extract metrics for this country
                     metrics = self._extract_country_metrics(country_tag, country_data)
-                    
-                    # Get country name (try various fields)
+
                     country_name = (
                         country_data.get('name') or 
                         country_data.get('localized_name') or 
@@ -123,7 +115,6 @@ class MetricsExtractor:
                         country_tag
                     )
                     
-                    # Create CountryMetrics object
                     country_metrics = CountryMetrics(
                         country_tag=country_tag,
                         country_name=country_name,
@@ -131,12 +122,10 @@ class MetricsExtractor:
                         is_player=(country_tag == player_country)
                     )
                     
-                    # Only add if country has valid metrics
                     if country_metrics.has_valid_metrics():
                         country_metrics_list.append(country_metrics)
                         self.extraction_stats['countries_with_data'] += 1
-                        
-                        # Count extracted metrics
+
                         valid_metrics = sum(1 for v in metrics.values() if v is not None)
                         self.extraction_stats['metrics_extracted'] += valid_metrics
                     
@@ -167,12 +156,10 @@ class MetricsExtractor:
         Args:
             country_metrics_list: List of CountryMetrics objects (mutated in-place)
         """
-        # Collect countries that have a valid prestige value
         ranked = [
             cm for cm in country_metrics_list
             if cm.get_metric('prestige') is not None
         ]
-        # Sort descending by prestige
         ranked.sort(key=lambda cm: cm.get_metric('prestige') or 0.0, reverse=True)
 
         for rank_idx, cm in enumerate(ranked, start=1):
@@ -199,7 +186,6 @@ class MetricsExtractor:
         metrics = {}
         
         try:
-            # GDP - get latest value from trend data
             metrics['gdp'] = self._extract_trend_metric(
                 country_data, ['gdp', 'channels', '0', 'values']
             )
@@ -225,33 +211,26 @@ class MetricsExtractor:
             # Store None only if there was genuinely no budget data at all
             metrics['money_holding'] = (_money - _debt) if _money is not None else None
             
-            # Prestige - get latest value from trend data
             metrics['prestige'] = self._extract_trend_metric(
                 country_data, ['prestige', 'channels', '0', 'values']
             )
             
-            # Literacy - get latest value from trend data
             metrics['literacy'] = self._extract_trend_metric(
                 country_data, ['literacy', 'channels', '0', 'values']
             )
             
-            # Average standard of living - get latest value
             metrics['avgsol'] = self._extract_trend_metric(
                 country_data, ['avgsoltrend', 'channels', '0', 'values']
             )
             
-            # Population - sum of all strata
             metrics['population'] = self._extract_population_total(country_data)
-            
-            # Army personnel - military workforce
+
             metrics['army_personnel'] = self._extract_direct_metric(
                 country_data, ['pop_statistics', 'population_military_workforce'], float
             )
 
-            # Culture amount - number of different cultures
             metrics['culture_amount'] = self._extract_culture_count(country_data)
 
-            # Power projection - computed from military formations
             metrics['power_projection'] = self._extract_power_projection(country_data)
 
             # Infamy — must use explicit None check; 0.0 is a valid value
@@ -400,27 +379,22 @@ class MetricsExtractor:
         }
         
         try:
-            # Validate country tag: must be exactly 3 alphanumeric characters
-            # (includes dynamic/rebel tags like "D01")
+            # Validate tag: must be exactly 3 alphanumeric characters (includes dynamic/rebel tags like "D01")
             tag = country_metrics.country_tag
             if not tag or len(tag) != 3 or not tag.isalnum():
                 validation_result['errors'].append(f"Invalid country tag: {tag!r}")
                 validation_result['valid'] = False
             
-            # Check each metric
             for metric_name, metric_value in country_metrics.metrics.items():
                 if metric_value is not None:
-                    # Check for negative values (most metrics should be non-negative)
                     if metric_value < 0:
                         validation_result['warnings'].append(f"Negative value for {metric_name}: {metric_value}")
-                    
-                    # Check for extremely large values (potential data corruption)
-                    if metric_value > 1e12:  # 1 trillion
+
+                    if metric_value > 1e12:
                         validation_result['warnings'].append(f"Extremely large value for {metric_name}: {metric_value}")
-                    
+
                     validation_result['valid_metrics_count'] += 1
-            
-            # Check if country has reasonable amount of data
+
             if validation_result['valid_metrics_count'] == 0:
                 validation_result['warnings'].append("No valid metrics found for country")
             elif validation_result['valid_metrics_count'] < 3:
@@ -440,13 +414,11 @@ class MetricsExtractor:
         """
         stats = self.extraction_stats.copy()
         
-        # Calculate success rate
         if stats['countries_processed'] > 0:
             stats['success_rate'] = (stats['countries_with_data'] / stats['countries_processed']) * 100
         else:
             stats['success_rate'] = 0.0
         
-        # Calculate average metrics per country
         if stats['countries_with_data'] > 0:
             stats['avg_metrics_per_country'] = stats['metrics_extracted'] / stats['countries_with_data']
         else:

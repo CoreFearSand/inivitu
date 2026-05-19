@@ -67,12 +67,10 @@ def check_dependencies():
 
 def check_rakaly():
     """Check if rakaly.exe is available."""
-    # Check current directory first
     local_rakaly = Path("./rakaly.exe")
     if local_rakaly.exists():
         return True, str(local_rakaly)
-    
-    # Check system PATH
+
     system_rakaly = shutil.which("rakaly") or shutil.which("rakaly.exe")
     if system_rakaly:
         return True, system_rakaly
@@ -89,15 +87,13 @@ def check_config():
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        
-        # Check required fields
+
         required_fields = ['save_directory', 'database_path', 'web_port']
         missing_fields = [field for field in required_fields if field not in config]
         
         if missing_fields:
             return False, f"Missing required configuration fields: {', '.join(missing_fields)}"
-        
-        # Check save directory
+
         save_dir = Path(config['save_directory'])
         if not save_dir.exists():
             return False, f"Save directory does not exist: {save_dir}"
@@ -129,19 +125,16 @@ def run_installation():
 def validate_environment():
     """Validate the complete environment before starting."""
     print("Validating environment...")
-    
-    # Check Python version
+
     if not check_python_version():
         return False
-    
-    # Check dependencies
+
     print("Checking Python dependencies...")
     if not check_dependencies():
         print()
         print("   Tip: Run 'python victoria3_tracker.py --install' to set up dependencies")
         return False
-    
-    # Check rakaly
+
     print("Checking rakaly.exe...")
     rakaly_available, rakaly_path = check_rakaly()
     if not rakaly_available:
@@ -152,8 +145,7 @@ def validate_environment():
         return False
     else:
         print(f"   rakaly.exe found: {rakaly_path}")
-    
-    # Check configuration
+
     print("Checking configuration...")
     config_valid, config_or_error = check_config()
     if not config_valid:
@@ -175,25 +167,21 @@ def start_application(args):
     try:
         # Import here to avoid import errors during validation
         from victoria3_tracker.main import Victoria3Tracker
-        
+
         print("Starting Victoria 3 Game Tracker...")
-        
-        # Create tracker instance
+
         tracker = Victoria3Tracker(args.config)
-        
-        # Override settings from command line
+
         if args.log_level:
             tracker.config_manager.set("log_level", args.log_level)
         
         if args.port:
             tracker.config_manager.set("web_port", args.port)
-        
-        # Set web-only mode if requested
+
         if args.web_only:
             tracker.web_only_mode = True
             print("Running in web-only mode (file monitoring disabled)")
-        
-        # Show startup information
+
         config = tracker.config_manager.config
         print()
         print("Configuration:")
@@ -209,8 +197,7 @@ def start_application(args):
         
         print()
         print("Starting services...")
-        
-        # Start the application
+
         tracker.start()
         
     except ImportError as e:
@@ -231,18 +218,17 @@ def process_single_file(file_path):
         from victoria3_tracker.main import Victoria3Tracker
         
         print(f"Processing single file: {file_path}")
-        
+
         file_path = Path(file_path)
         if not file_path.exists():
             print(f"   File not found: {file_path}")
             return False
-        
+
         if not file_path.suffix == '.v3':
             print(f"   Not a Victoria 3 save file: {file_path}")
             print("   Expected .v3 extension")
             return False
-        
-        # Create tracker and process file
+
         tracker = Victoria3Tracker()
         success = tracker._process_single_file(file_path)
         
@@ -263,9 +249,7 @@ def show_status():
         from victoria3_tracker.main import Victoria3Tracker
         
         print("Checking application status...")
-        
-        # Try to get status from running instance
-        # For now, just show configuration status
+
         config_valid, config_or_error = check_config()
         
         if config_valid:
@@ -376,13 +360,11 @@ For more information, visit: https://github.com/your-repo/victoria3-tracker
     )
     
     args = parser.parse_args()
-    
-    # Show banner unless quiet mode
+
     if not args.quiet:
         print_banner()
     
     try:
-        # Handle special actions
         if args.install:
             success = run_installation()
             sys.exit(0 if success else 1)
@@ -394,8 +376,7 @@ For more information, visit: https://github.com/your-repo/victoria3-tracker
         if args.process_file:
             success = process_single_file(args.process_file)
             sys.exit(0 if success else 1)
-        
-        # Validate environment unless skipped
+
         if not args.no_validate:
             if not validate_environment():
                 print()
@@ -404,8 +385,7 @@ For more information, visit: https://github.com/your-repo/victoria3-tracker
                 print("   python victoria3_tracker.py --status     # Check status")
                 print("   python victoria3_tracker.py --no-validate # Skip validation")
                 sys.exit(1)
-        
-        # Start the application
+
         print()
         success = start_application(args)
         sys.exit(0 if success else 1)

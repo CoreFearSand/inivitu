@@ -98,15 +98,13 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function setupCountriesPage() {
-    // Search functionality
     const searchInput = document.getElementById('country-search');
     if (searchInput) {
         searchInput.addEventListener('input', debounce(function() {
             filterCountries(searchInput.value);
         }, 300));
     }
-    
-    // Sort functionality
+
     const sortSelect = document.getElementById('sort-select');
     if (sortSelect) {
         sortSelect.addEventListener('change', function() {
@@ -132,7 +130,6 @@ function filterCountries(searchTerm) {
         }
     });
 
-    // Show/hide "no results" message
     let noResults = document.getElementById('countries-no-results');
     if (visible === 0 && term) {
         if (!noResults) {
@@ -176,7 +173,6 @@ function sortCountries(sortBy) {
         }
     });
     
-    // Re-append sorted cards
     cards.forEach(card => container.appendChild(card));
 }
 

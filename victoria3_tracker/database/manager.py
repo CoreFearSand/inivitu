@@ -31,28 +31,23 @@ class DatabaseManager:
         self._local = threading.local()
         self._lock = threading.Lock()
         self._initialized = False
-        
-        # Ensure database directory exists
+
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize database
+
         self._initialize_database()
     
     def _initialize_database(self) -> None:
         """Initialize database schema and verify integrity."""
         try:
             with self.get_connection() as conn:
-                # Create schema if needed
                 create_schema(conn)
 
                 # Apply incremental migrations (idempotent — safe on fresh DBs too)
                 migrate_schema(conn)
 
-                # Verify schema integrity
                 if not verify_schema(conn):
                     raise RuntimeError("Database schema verification failed")
-                
-                # Store schema version
+
                 self._store_schema_version(conn)
                 
                 self._initialized = True
@@ -91,7 +86,6 @@ class DatabaseManager:
         Returns:
             SQLite connection with proper configuration
         """
-        # Use thread-local storage for connections
         if not hasattr(self._local, 'connection') or self._local.connection is None:
             try:
                 # check_same_thread=False is intentional: each thread gets its
@@ -103,15 +97,14 @@ class DatabaseManager:
                     timeout=30.0,
                     check_same_thread=False
                 )
-                
-                # Configure connection
+
+
                 conn.execute("PRAGMA foreign_keys = ON")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute("PRAGMA synchronous = NORMAL")
                 conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
                 conn.execute("PRAGMA temp_store = MEMORY")
-                
-                # Set row factory for easier data access
+
                 conn.row_factory = sqlite3.Row
                 
                 self._local.connection = conn
@@ -233,12 +226,10 @@ class DatabaseManager:
         """
         try:
             stats = {}
-            
-            # Database file size
+
             if self.database_path.exists():
                 stats['file_size_mb'] = self.database_path.stat().st_size / (1024 * 1024)
-            
-            # Table row counts
+
             tables = ['Saves', 'Countries', 'CountryMetrics', 'Wars', 'ProcessingLog']
             for table in tables:
                 try:
@@ -248,7 +239,6 @@ class DatabaseManager:
                     logger.warning(f"Could not get row count for {table}: {e}")
                     stats[f'{table.lower()}_count'] = 0
 
-            # Schema version
             try:
                 result = self.execute_query("SELECT value FROM schema_info WHERE key = 'version'")
                 stats['schema_version'] = result[0][0] if result else 'unknown'
@@ -256,7 +246,6 @@ class DatabaseManager:
                 logger.warning(f"Could not get schema version: {e}")
                 stats['schema_version'] = 'unknown'
 
-            # WAL mode info
             try:
                 result = self.execute_query("PRAGMA journal_mode")
                 stats['journal_mode'] = result[0][0]
@@ -275,11 +264,9 @@ class DatabaseManager:
         try:
             logger.info("Starting database vacuum operation...")
             conn = self.get_connection()
-            
-            # Close any existing transactions
+
             conn.commit()
-            
-            # Perform vacuum
+
             conn.execute("VACUUM")
             logger.info("Database vacuum completed successfully")
             

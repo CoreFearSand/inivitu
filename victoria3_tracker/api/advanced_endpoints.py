@@ -26,7 +26,6 @@ class AdvancedEndpoints:
         self.db_manager = api_app.db_manager
         self.data_access = api_app.data_access
         
-        # Register advanced routes
         self._register_advanced_routes()
         self._register_debug_routes()
 
@@ -35,7 +34,6 @@ class AdvancedEndpoints:
     def _register_advanced_routes(self):
         """Register all advanced API routes."""
         
-        # Compare multiple countries
         @self.app.route('/api/compare/countries', methods=['POST'])
         def compare_countries():
             """Compare metrics between multiple countries."""
@@ -51,12 +49,10 @@ class AdvancedEndpoints:
                 if not isinstance(countries, list) or not countries or len(countries) > 10:
                     abort(400)
                 
-                # Validate country tags
                 for country in countries:
                     if not country or len(country) != 3:
                         abort(400)
                 
-                # Get metrics for all countries
                 comparison_data = {}
                 for country_tag in countries:
                     metrics = self.data_access.get_country_metrics(country_tag, metric_name, limit)
@@ -73,12 +69,10 @@ class AdvancedEndpoints:
                 logger.error(f"Error comparing countries: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get metric trends over time
         @self.app.route('/api/trends/<metric_name>', methods=['GET'])
         def get_metric_trends(metric_name: str):
             """Get metric trends over time for top countries."""
             try:
-                # Get query parameters
                 limit_countries = request.args.get('countries', 5, type=int)
                 limit_points = request.args.get('points', 50, type=int)
                 start_date = request.args.get('start_date')
@@ -99,7 +93,6 @@ class AdvancedEndpoints:
                     if playthroughs:
                         playthrough_id = playthroughs[0]['playthrough_id']
                 
-                # Build filters
                 filters = ""
                 params = [metric_name]
                 
@@ -118,7 +111,6 @@ class AdvancedEndpoints:
                     filters += " AND s.in_game_date <= ?"
                     params.append(end_date)
                 
-                # Get top countries for this metric
                 top_countries_query = f"""
                     SELECT c.country_tag, c.name, MAX(cm.amount) as max_value
                     FROM CountryMetrics cm
@@ -134,12 +126,10 @@ class AdvancedEndpoints:
                 
                 top_countries = self.db_manager.execute_query(top_countries_query, params)
                 
-                # Get trend data for each top country
                 trends = {}
                 for country in top_countries:
                     country_tag = country['country_tag']
                     
-                    # Build trend query with same filters
                     trend_filters = ""
                     trend_params = [country_tag, metric_name]
                     
@@ -192,17 +182,14 @@ class AdvancedEndpoints:
                 logger.error(f"Error getting metric trends: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get country performance summary
         @self.app.route('/api/countries/<country_tag>/summary', methods=['GET'])
         def get_country_summary(country_tag: str):
             """Get comprehensive summary for a country."""
             try:
                 country_tag = validate_tag(country_tag)
                 
-                # Get latest metrics
                 latest_metrics = self.data_access.get_latest_metrics_for_country(country_tag)
-                
-                # Get country info
+
                 country_info_query = """
                     SELECT DISTINCT c.name, c.is_player_country, s.in_game_date
                     FROM Countries c
@@ -218,13 +205,11 @@ class AdvancedEndpoints:
                 
                 country_data = dict(country_info[0])
                 
-                # Get rankings for each metric
                 rankings = {}
                 for metric in latest_metrics:
                     metric_name = metric['metric_name']
                     ranking_data = self.data_access.get_country_rankings(metric_name, None, 100)
                     
-                    # Find this country's rank
                     country_rank = None
                     for i, rank_entry in enumerate(ranking_data):
                         if rank_entry['country_tag'] == country_tag:
@@ -236,7 +221,6 @@ class AdvancedEndpoints:
                         'total_countries': len(ranking_data)
                     }
                 
-                # Calculate growth rates (if we have historical data)
                 growth_rates = {}
                 for metric in latest_metrics:
                     metric_name = metric['metric_name']
@@ -263,7 +247,6 @@ class AdvancedEndpoints:
                 logger.error(f"Error getting country summary: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Search countries
         @self.app.route('/api/search/countries', methods=['GET'])
         def search_countries():
             """Search countries by name or tag."""
@@ -276,7 +259,6 @@ class AdvancedEndpoints:
                 
                 limit = max(1, min(limit, 100))
                 
-                # Search by name or tag
                 search_query = """
                     SELECT DISTINCT c.country_tag, c.name, c.is_player_country,
                            MAX(s.in_game_date) as latest_date
@@ -320,14 +302,12 @@ class AdvancedEndpoints:
                 logger.error(f"Error searching countries: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get metric statistics
         @self.app.route('/api/metrics/<metric_name>/stats', methods=['GET'])
         def get_metric_statistics(metric_name: str):
             """Get statistical analysis for a metric."""
             try:
-                date = request.args.get('date')  # Optional specific date
+                date = request.args.get('date')
                 
-                # Build query for metric statistics
                 if date:
                     stats_query = """
                         SELECT 
@@ -342,7 +322,6 @@ class AdvancedEndpoints:
                     """
                     params = (metric_name, date)
                 else:
-                    # Get stats for latest available date
                     stats_query = """
                         SELECT 
                             COUNT(*) as country_count,
@@ -368,7 +347,6 @@ class AdvancedEndpoints:
                 
                 stats = dict(stats_result[0])
                 
-                # Get percentile data (top 10%, top 25%, etc.)
                 percentile_query = """
                     SELECT cm.amount
                     FROM CountryMetrics cm
@@ -432,7 +410,6 @@ class AdvancedEndpoints:
             try:
                 country_tag = request.args.get('country_tag', '').upper() or None
 
-                # ── Metrics per type ────────────────────────────────────────
                 metrics_by_type = self.db_manager.execute_query("""
                     SELECT mt.name, mt.display_name, mt.is_active,
                            COUNT(*) AS row_count,
@@ -447,7 +424,6 @@ class AdvancedEndpoints:
                     ORDER BY mt.name
                 """)
 
-                # ── Interest group count ─────────────────────────────────────
                 ig_total = self.db_manager.execute_query(
                     "SELECT COUNT(*) AS cnt FROM InterestGroups"
                 )
@@ -468,7 +444,6 @@ class AdvancedEndpoints:
                     LIMIT 20
                 """)
 
-                # ── Country-specific sample (if requested) ──────────────────
                 country_sample = None
                 if country_tag:
                     country_sample = self.db_manager.execute_query("""
@@ -483,7 +458,6 @@ class AdvancedEndpoints:
                         ORDER BY mt.name
                     """, (country_tag,))
 
-                # ── Most recent save info ────────────────────────────────────
                 latest_save = self.db_manager.execute_query("""
                     SELECT save_id, filename, in_game_date, saved_at
                     FROM Saves ORDER BY saved_at DESC LIMIT 1

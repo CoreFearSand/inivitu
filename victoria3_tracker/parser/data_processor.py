@@ -69,42 +69,36 @@ class DataProcessor:
         try:
             logger.info(f"Starting processing of save file: {file_path.name}")
             
-            # Log processing start
             self.data_access.log_processing_result(
                 filename=file_path.name,
                 status='processing',
                 processing_time_ms=None
             )
-            
-            # Step 1: Parse save file
+
             logger.debug("Step 1: Parsing save file with rakaly")
             parsed_data, validation_result = self.save_parser.parse_and_validate(file_path)
-            
+
             if not validation_result['valid']:
                 error_msg = f"Save file validation failed: {validation_result['errors']}"
                 logger.error(error_msg)
                 self._log_processing_failure(file_path.name, error_msg, start_time)
                 return False
-            
-            # Log validation warnings
+
             for warning in validation_result['warnings']:
                 logger.warning(f"Save validation warning: {warning}")
-            
-            # Step 2: Extract metrics
+
             logger.debug("Step 2: Extracting game metrics")
             country_metrics_list = self.metrics_extractor.extract_all_metrics(parsed_data)
-            
+
             if not country_metrics_list:
                 error_msg = "No valid country metrics extracted"
                 logger.error(error_msg)
                 self._log_processing_failure(file_path.name, error_msg, start_time)
                 return False
-            
-            # Step 2.5: Extract war data
+
             logger.debug("Step 2.5: Extracting war data")
             wars_list = self.war_extractor.extract_all_wars(parsed_data)
-            
-            # Step 3: Store in database
+
             logger.debug("Step 3: Storing data in database")
             success = self._store_data_in_database(
                 parsed_data=parsed_data,
@@ -121,7 +115,6 @@ class DataProcessor:
                 self._log_processing_failure(file_path.name, error_msg, start_time)
                 return False
             
-            # Update statistics
             processing_time = time.time() - start_time
             self._update_processing_stats(file_path, processing_time, len(country_metrics_list))
             
@@ -156,7 +149,6 @@ class DataProcessor:
             processing_time_ms = int((time.time() - processing_start.timestamp()) * 1000)
             file_size = file_path.stat().st_size
             
-            # Step 3.1: Insert save metadata
             save_id = self.data_access.insert_save_metadata(
                 save_data=parsed_data,
                 filename=file_path.name,
@@ -166,15 +158,12 @@ class DataProcessor:
                 file_timestamp=file_path.stat().st_mtime
             )
             
-            # Step 3.2: Insert countries
             countries_inserted = self.data_access.insert_countries(parsed_data, save_id)
             logger.debug(f"Inserted {countries_inserted} countries")
-            
-            # Step 3.3: Insert country metrics
+
             metrics_inserted = self._insert_country_metrics(country_metrics_list, save_id, parsed_data)
             logger.debug(f"Inserted {metrics_inserted} metrics")
-            
-            # Step 3.4: Insert war data
+
             # Sanitise playthrough_id: must be a non-empty string; fall back to save_id
             raw_pid = parsed_data.get('playthrough_id')
             if raw_pid and isinstance(raw_pid, str) and raw_pid.strip():
@@ -191,19 +180,16 @@ class DataProcessor:
             )
             logger.debug(f"Inserted {wars_inserted} wars")
 
-            # Step 3.5: Extract and store interest groups
             ig_list = self.ig_extractor.extract_all_interest_groups(parsed_data)
             ig_inserted = self.data_access.insert_interest_groups(ig_list, save_id)
             logger.debug(f"Inserted {ig_inserted} interest groups")
 
-            # Step 3.6: Extract and store law history
             law_changes = self.law_extractor.extract(parsed_data)
             laws_inserted = self.data_access.insert_laws(
                 law_changes, save_id, playthrough_id
             )
             logger.debug(f"Stored {laws_inserted} law changes")
 
-            # Step 3.7: Log successful processing
             self.data_access.log_processing_result(
                 filename=file_path.name,
                 status='success',
@@ -211,7 +197,6 @@ class DataProcessor:
                 processing_time_ms=processing_time_ms
             )
             
-            # Update processing statistics
             self.processing_stats['countries_processed'] += len(country_metrics_list)
             self.processing_stats['metrics_stored'] += metrics_inserted
             self.processing_stats['wars_stored'] += wars_inserted
@@ -241,27 +226,24 @@ class DataProcessor:
                 parsed_data.get("date") or parsed_data.get("game_date", "")
             ) or "1836-01-01"
             
-            # Get country and metric type mappings
             country_ids = self.data_access._get_country_ids(save_id)
             metric_type_ids = self.data_access._get_metric_type_ids()
-            
+
             if not country_ids or not metric_type_ids:
                 logger.error("Missing country or metric type mappings")
                 return 0
-            
-            # Prepare metrics for batch insertion
+
             metrics_to_insert = []
-            
+
             for country_metrics in country_metrics_list:
                 country_tag = country_metrics.country_tag
-                
+
                 if country_tag not in country_ids:
                     logger.warning(f"Country {country_tag} not found in database")
                     continue
-                
+
                 country_id = country_ids[country_tag]
-                
-                # Insert each metric
+
                 for metric_name, metric_value in country_metrics.metrics.items():
                     if metric_name not in metric_type_ids:
                         continue
@@ -278,8 +260,7 @@ class DataProcessor:
             if not metrics_to_insert:
                 logger.warning("No valid metrics to insert")
                 return 0
-            
-            # Batch insert metrics
+
             inserted_count = self.db_manager.execute_many("""
                 INSERT OR REPLACE INTO CountryMetrics 
                 (country_id, metric_type_id, amount, recorded_at, save_id)
@@ -336,7 +317,6 @@ class DataProcessor:
         """
         stats = self.processing_stats.copy()
         
-        # Calculate derived statistics
         if stats['files_processed'] > 0:
             stats['average_processing_time'] = stats['total_processing_time'] / stats['files_processed']
             stats['success_rate'] = ((stats['files_processed'] - stats['files_failed']) / 
@@ -350,7 +330,6 @@ class DataProcessor:
         else:
             stats['average_metrics_per_country'] = 0.0
         
-        # Add component statistics
         stats['parser_info'] = self.save_parser.get_parser_info()
         stats['extraction_stats'] = self.metrics_extractor.get_extraction_stats()
         stats['war_extraction_stats'] = self.war_extractor.get_extraction_stats()
@@ -388,7 +367,6 @@ class DataProcessor:
         }
         
         try:
-            # Check parser
             parser_info = self.save_parser.get_parser_info()
             validation_result['components']['parser'] = parser_info
             
@@ -396,7 +374,6 @@ class DataProcessor:
                 validation_result['errors'].append(f"rakaly.exe not found at {parser_info['rakaly_path']}")
                 validation_result['valid'] = False
             
-            # Check database
             db_stats = self.db_manager.get_database_stats()
             validation_result['components']['database'] = db_stats
             
@@ -404,7 +381,6 @@ class DataProcessor:
                 validation_result['errors'].append(f"Database error: {db_stats['error']}")
                 validation_result['valid'] = False
             
-            # Check metric types
             metric_types = self.data_access._get_metric_type_ids()
             validation_result['components']['metric_types_count'] = len(metric_types)
             
@@ -412,7 +388,6 @@ class DataProcessor:
                 validation_result['errors'].append("No metric types found in database")
                 validation_result['valid'] = False
             
-            # Check configuration
             config_validation = self.config.validate_config()
             validation_result['components']['config_valid'] = config_validation
             
@@ -446,7 +421,6 @@ class DataProcessor:
         }
         
         try:
-            # Step 1: Parse
             parsed_data, validation_result = self.save_parser.parse_and_validate(test_file_path)
             result['parsing_result'] = {'data_keys': list(parsed_data.keys()) if parsed_data else []}
             result['validation_result'] = validation_result
@@ -455,7 +429,6 @@ class DataProcessor:
                 result['error'] = f"Validation failed: {validation_result['errors']}"
                 return result
             
-            # Step 2: Extract metrics
             country_metrics_list = self.metrics_extractor.extract_all_metrics(parsed_data)
             result['metrics_result'] = {
                 'countries_found': len(country_metrics_list),
@@ -467,7 +440,6 @@ class DataProcessor:
                 result['error'] = "No metrics extracted"
                 return result
             
-            # Step 2.5: Extract war data
             wars_list = self.war_extractor.extract_all_wars(parsed_data)
             result['war_result'] = {
                 'wars_found': len(wars_list),
@@ -475,14 +447,12 @@ class DataProcessor:
                 'sample_wars': [w.save_war_id for w in wars_list[:3]]
             }
 
-            # Step 2.6: Extract interest groups
             ig_list = self.ig_extractor.extract_all_interest_groups(parsed_data)
             result['ig_result'] = {
                 'igs_found': len(ig_list),
                 'extraction_stats': self.ig_extractor.get_extraction_stats(),
             }
 
-            # Step 3: Test storage (without actually storing)
             result['storage_result'] = {
                 'would_store_countries': len(country_metrics_list),
                 'would_store_metrics': sum(

@@ -48,10 +48,6 @@ class InterestGroupExtractor:
             'extraction_errors': 0,
         }
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def extract_all_interest_groups(
         self, parsed_data: Dict[str, Any]
     ) -> List[InterestGroupData]:
@@ -72,13 +68,11 @@ class InterestGroupExtractor:
         results: List[InterestGroupData] = []
 
         try:
-            # Build a numeric-ID → country_tag lookup from the country manager
             id_to_tag = self._build_id_to_tag_map(parsed_data)
             if not id_to_tag:
                 logger.warning("InterestGroupExtractor: could not build country ID map")
                 return results
 
-            # Victoria 3 uses 'interest_groups' as the top-level key.
             # Fall back to legacy key names for compatibility.
             ig_manager = (
                 parsed_data.get('interest_groups')
@@ -90,7 +84,6 @@ class InterestGroupExtractor:
                 ig_db = ig_manager.get('database') or ig_manager.get('data') or {}
 
             if not ig_db:
-                # Diagnostic: log what top-level keys are present
                 top_keys = [k for k in parsed_data.keys() if 'interest' in k.lower()
                             or 'ig_' in k.lower() or k.startswith('political')]
                 logger.warning(
@@ -109,7 +102,6 @@ class InterestGroupExtractor:
                     if not isinstance(ig_data, dict):
                         continue
 
-                    # Resolve the owner country — try several field names
                     country_numeric_id = (
                         ig_data.get('country')
                         or ig_data.get('owner')
@@ -179,10 +171,6 @@ class InterestGroupExtractor:
     def get_extraction_stats(self) -> Dict[str, int]:
         """Return statistics from the most recent extraction run."""
         return self.extraction_stats.copy()
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
 
     def _build_id_to_tag_map(self, parsed_data: Dict[str, Any]) -> Dict[str, str]:
         """Build a mapping from numeric country database-ID to 3-letter tag."""

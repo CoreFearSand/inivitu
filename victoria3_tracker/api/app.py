@@ -7,8 +7,10 @@ Provides REST endpoints for accessing game data and statistics.
 import logging
 import csv
 import io
+import json as _json
 import time
 import uuid
+from datetime import datetime
 from flask import Flask, jsonify, request, abort, g, Response
 from flask_cors import CORS
 from typing import Dict, Any, Optional
@@ -43,32 +45,18 @@ class Victoria3API:
         self.db_manager = db_manager
         self.data_access = DataAccessLayer(db_manager)
 
-        # Load country name mapping from CSV
         self.country_names = self._load_country_names()
-
-        # Create Flask app
         self.app = Flask(__name__)
         self.app.config['JSON_SORT_KEYS'] = False
         
         # Enable CORS restricted to localhost only
         CORS(self.app, origins=r"http://(localhost|127\.0\.0\.1)(:\d+)?")
         
-        # Setup request logging middleware
         self._setup_request_logging()
-
-        # Setup error handlers
         self._setup_error_handlers()
-
-        # Register routes
         self._register_routes()
-        
-        # Initialize advanced endpoints
         self.advanced_endpoints = AdvancedEndpoints(self)
-        
-        # Initialize war endpoints
         self.war_endpoints = WarEndpoints(self)
-
-        # Initialize country endpoints
         self.country_endpoints = CountryEndpoints(self)
 
         # WebSocket handler disabled
@@ -164,12 +152,10 @@ class Victoria3API:
     def _register_routes(self):
         """Register all API routes."""
         
-        # Health check endpoint
         @self.app.route('/api/health', methods=['GET'])
         def health_check():
             """Health check endpoint."""
             try:
-                # Test database connection
                 stats = self.db_manager.get_database_stats()
                 
                 return jsonify({
@@ -189,18 +175,15 @@ class Victoria3API:
                     'error': str(e)
                 }), 500
         
-        # Get all countries
         @self.app.route('/api/countries', methods=['GET'])
         def get_countries():
             """Get list of all countries."""
             try:
-                # Get query parameters
                 limit = request.args.get('limit', 100, type=int)
                 save_id = request.args.get('save_id')
 
                 limit = max(1, min(limit, MAX_COUNTRIES_PER_REQUEST))
                 
-                # Build query
                 if save_id:
                     query = """
                         SELECT DISTINCT c.country_tag, c.name, c.is_player_country, s.in_game_date
@@ -237,7 +220,6 @@ class Victoria3API:
                         'flag_url_alt': _flag_url_alt(r['name'] or r['country_tag'])
                     })
                 
-                # Prepend the virtual Global country (D99) at the top
                 countries.insert(0, {
                     'country_tag': 'D99',
                     'name': 'Global',
@@ -258,7 +240,6 @@ class Victoria3API:
                 logger.error(f"Error getting countries: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get metrics for a specific country
         @self.app.route('/api/countries/<country_tag>/metrics', methods=['GET'])
         def get_country_metrics(country_tag: str):
             """Get metrics for a specific country.
@@ -273,7 +254,6 @@ class Victoria3API:
 
                 country_tag = country_tag.upper()
 
-                # Get query parameters
                 metric_name = request.args.get('metric')
                 playthrough_id = request.args.get('playthrough_id')
                 limit = request.args.get('limit', 50, type=int)
@@ -309,7 +289,6 @@ class Victoria3API:
                         ]
                     return jsonify(response)
 
-                # Build metrics dict keyed by metric name (expected by countries.js)
                 if playthrough_id:
                     latest_list = self.data_access.get_latest_metrics_for_country_playthrough(
                         country_tag, playthrough_id
@@ -334,7 +313,6 @@ class Victoria3API:
                     'metrics': metrics_dict,
                 }
 
-                # Build history array when a specific metric is requested
                 if metric_name:
                     if playthrough_id:
                         history_rows = self.data_access.get_country_metrics_for_playthrough(
@@ -345,7 +323,6 @@ class Victoria3API:
                             country_tag, metric_name, limit
                         )
 
-                    # Sort ascending by game date for charts
                     history_rows = sorted(
                         history_rows,
                         key=lambda r: r.get('in_game_date') or r.get('recorded_at') or ''
@@ -365,29 +342,25 @@ class Victoria3API:
                 logger.error(f"Error getting country metrics: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get metrics trends for a playthrough
         @self.app.route('/api/playthroughs/<playthrough_id>/metrics', methods=['GET'])
         def get_playthrough_metrics(playthrough_id: str):
             """Get metrics trends for a specific playthrough."""
             try:
-                # Get query parameters
                 metric_name = request.args.get('metric')
                 country_tag = request.args.get('country_tag')
                 limit = request.args.get('limit', 100, type=int)
                 top_countries = request.args.get('top_countries', 10, type=int)
                 
                 if limit > 500:
-                    limit = 500  # Cap at 500
-                
+                    limit = 500
+
                 if top_countries > 50:
-                    top_countries = 50  # Cap at 50 countries
+                    top_countries = 50
                 
                 if not metric_name:
                     return jsonify({'error': 'metric parameter is required'}), 400
                 
-                # Build query based on parameters
                 if country_tag:
-                    # Get metrics for specific country in playthrough
                     query = """
                         SELECT 
                             cm.amount,
@@ -407,8 +380,6 @@ class Victoria3API:
                     """
                     params = (playthrough_id, metric_name, country_tag, limit)
                 else:
-                    # Get all countries with their actual latest metric values
-                    # Use a window function to get the latest value for each country properly
                     top_countries_query = """
                         SELECT country_tag, latest_amount
                         FROM (
@@ -433,7 +404,6 @@ class Victoria3API:
                     if not top_countries_results:
                         return jsonify({'metrics': [], 'metric_name': metric_name}), 200
                     
-                    # Now get all historical metrics for ALL countries (no limit)
                     query = """
                         SELECT 
                             cm.amount,
@@ -479,23 +449,20 @@ class Victoria3API:
                 logger.error(f"Error getting playthrough metrics: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get country rankings
         @self.app.route('/api/rankings/<metric_name>', methods=['GET'])
         def get_rankings(metric_name: str):
             """Get country rankings for a specific metric."""
             try:
-                # Get query parameters
                 limit = request.args.get('limit', 20, type=int)
                 date = request.args.get('date')
                 save_id = request.args.get('save_id')
                 playthrough_id = request.args.get('playthrough_id')
                 
                 if limit > 100:
-                    limit = 100  # Cap at 100
-                
+                    limit = 100
+
                 rankings = self.data_access.get_country_rankings(metric_name, date, limit, save_id, playthrough_id)
 
-                # Apply readable names
                 for entry in rankings:
                     tag = entry.get('country_tag', '')
                     display = self.get_country_display_name(tag)
@@ -514,7 +481,6 @@ class Victoria3API:
                 logger.error(f"Error getting rankings: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get available save games (playthroughs)
         @self.app.route('/api/playthroughs', methods=['GET'])
         def get_playthroughs():
             """Get list of available playthroughs/save games."""
@@ -535,7 +501,6 @@ class Victoria3API:
                 
                 playthroughs = []
                 for row in results:
-                    # Create a more descriptive name
                     campaign_name = f"Campaign {row['playthrough_id'][:8]}..."
                     if row['player_country']:
                         campaign_name = f"{row['player_country']} Campaign ({row['playthrough_id'][:8]}...)"
@@ -560,7 +525,6 @@ class Victoria3API:
                 logger.error(f"Error getting playthroughs: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Delete a playthrough and all associated data
         @self.app.route('/api/playthroughs/<playthrough_id>', methods=['DELETE'])
         def delete_playthrough(playthrough_id: str):
             """Delete a playthrough and all associated data.
@@ -573,7 +537,6 @@ class Victoria3API:
                 if not playthrough_id:
                     return jsonify({'error': 'playthrough_id is required'}), 400
 
-                # Verify the playthrough exists
                 existing = self.db_manager.execute_query(
                     "SELECT COUNT(*) AS cnt FROM Saves WHERE playthrough_id = ?",
                     (playthrough_id,)
@@ -584,7 +547,8 @@ class Victoria3API:
                 save_count = existing[0]['cnt']
 
                 with self.db_manager.transaction() as conn:
-                    # Delete saves — cascades to Countries, CountryMetrics, ProcessingLog
+                    # Delete saves — cascades to Countries, CountryMetrics,
+                    # InterestGroups, Territories, and ProcessingLog.
                     conn.execute(
                         "DELETE FROM Saves WHERE playthrough_id = ?",
                         (playthrough_id,)
@@ -593,6 +557,11 @@ class Victoria3API:
                     # so we delete them explicitly; CASCADE handles participants/battles.
                     conn.execute(
                         "DELETE FROM Wars WHERE playthrough_id = ?",
+                        (playthrough_id,)
+                    )
+                    # CountryLaws has no FK to Saves, so we must clean it up explicitly.
+                    conn.execute(
+                        "DELETE FROM CountryLaws WHERE playthrough_id = ?",
                         (playthrough_id,)
                     )
 
@@ -610,7 +579,6 @@ class Victoria3API:
                 logger.error(f"Error deleting playthrough {playthrough_id!r}: {e}")
                 return jsonify({'error': str(e)}), 500
 
-        # Get processed saves
         @self.app.route('/api/saves', methods=['GET'])
         def get_saves():
             """Get list of processed save files."""
@@ -618,8 +586,8 @@ class Victoria3API:
                 limit = request.args.get('limit', 50, type=int)
                 
                 if limit > 200:
-                    limit = 200  # Cap at 200
-                
+                    limit = 200
+
                 saves = self.data_access.get_processed_saves(limit)
                 
                 return jsonify({
@@ -631,8 +599,7 @@ class Victoria3API:
                 logger.error(f"Error getting saves: {e}")
                 return jsonify({'error': str(e)}), 500
 
-        
-        # Get available metrics
+
         @self.app.route('/api/metrics', methods=['GET'])
         def get_available_metrics():
             """Get list of available metric types."""
@@ -662,14 +629,12 @@ class Victoria3API:
                 logger.error(f"Error getting metrics: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Get database statistics
         @self.app.route('/api/stats', methods=['GET'])
         def get_stats():
             """Get database and processing statistics."""
             try:
                 db_stats = self.db_manager.get_database_stats()
                 
-                # Get additional statistics
                 latest_save = self.db_manager.execute_query("""
                     SELECT save_id, filename, in_game_date, saved_at
                     FROM Saves
@@ -695,12 +660,10 @@ class Victoria3API:
                 logger.error(f"Error getting stats: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        # Configuration management endpoints
         @self.app.route('/api/config', methods=['GET'])
         def get_config():
             """Get current configuration (excluding sensitive data)."""
             try:
-                # Return safe configuration values (exclude sensitive paths)
                 safe_config = {
                     'save_directory': self.config.get('save_directory'),
                     'web_port': self.config.get('web_port'),
@@ -734,7 +697,6 @@ class Victoria3API:
                 if not updates:
                     return jsonify({'error': 'No updates provided'}), 400
                 
-                # Validate allowed fields
                 allowed_fields = {
                     'save_directory', 'web_port', 'polling_interval', 'log_level',
                     'max_file_size_mb', 'processing_timeout_seconds', 
@@ -747,7 +709,6 @@ class Victoria3API:
                         'error': f'Invalid fields: {", ".join(invalid_fields)}'
                     }), 400
                 
-                # Validate save directory if provided
                 if 'save_directory' in updates:
                     save_dir = Path(updates['save_directory'])
                     if not save_dir.exists():
@@ -759,7 +720,6 @@ class Victoria3API:
                             'error': f'Save directory path is not a directory: {save_dir}'
                         }), 400
                 
-                # Validate numeric fields
                 numeric_fields = {
                     'web_port': (1, 65535),
                     'polling_interval': (0.1, 3600),
@@ -780,7 +740,6 @@ class Victoria3API:
                                 'error': f'{field} must be between {min_val} and {max_val}'
                             }), 400
                 
-                # Validate log level
                 if 'log_level' in updates:
                     valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
                     if updates['log_level'] not in valid_levels:
@@ -788,7 +747,6 @@ class Victoria3API:
                             'error': f'log_level must be one of: {", ".join(valid_levels)}'
                         }), 400
                 
-                # Update configuration
                 success = self.config.update_config(updates)
                 
                 if success:
@@ -818,12 +776,10 @@ class Victoria3API:
                 if not test_config:
                     return jsonify({'error': 'No configuration provided'}), 400
                 
-                # Create temporary config manager for validation
                 from ..config import ConfigManager
                 temp_config = ConfigManager.__new__(ConfigManager)
                 temp_config.config = {**self.config.config, **test_config}
                 
-                # Validate
                 is_valid = temp_config.validate_config()
                 
                 validation_results = {
@@ -831,7 +787,6 @@ class Victoria3API:
                     'errors': []
                 }
                 
-                # Add specific validation results
                 if 'save_directory' in test_config:
                     save_dir = Path(test_config['save_directory'])
                     if not save_dir.exists():
@@ -846,12 +801,6 @@ class Victoria3API:
             except Exception as e:
                 logger.error(f"Error validating config: {e}")
                 return jsonify({'error': str(e)}), 500
-
-        # ------------------------------------------------------------------ #
-        # Data export endpoints                                                #
-        # GET /api/export/metrics  — export country metrics as CSV or JSON    #
-        # GET /api/export/wars     — export war data as CSV or JSON           #
-        # ------------------------------------------------------------------ #
 
         @self.app.route('/api/export/metrics', methods=['GET'])
         def export_metrics():
@@ -909,7 +858,6 @@ class Victoria3API:
                         headers={'Content-Disposition': 'attachment; filename=metrics_export.json'}
                     )
 
-                # Default: CSV
                 if not data:
                     return Response("No data found", mimetype='text/plain'), 404
 
@@ -981,7 +929,6 @@ class Victoria3API:
                         headers={'Content-Disposition': 'attachment; filename=wars_export.json'}
                     )
 
-                # Default: CSV
                 if not data:
                     return Response("No data found", mimetype='text/plain'), 404
 
@@ -998,6 +945,345 @@ class Victoria3API:
 
             except Exception as e:
                 logger.error(f"Error exporting wars: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/saves/<save_id>', methods=['DELETE'])
+        def delete_save(save_id: str):
+            """Delete a single save record and all data that cascades from it.
+
+            Cascade removes: Countries → CountryMetrics, ProcessingLog.
+            Wars linked to the same playthrough are NOT deleted (they span
+            multiple saves).
+            """
+            try:
+                if not save_id:
+                    return jsonify({'error': 'save_id is required'}), 400
+
+                existing = self.db_manager.execute_query(
+                    "SELECT save_id, filename, playthrough_id FROM Saves WHERE save_id = ?",
+                    (save_id,)
+                )
+                if not existing:
+                    return jsonify({'error': 'Save not found'}), 404
+
+                info = dict(existing[0])
+
+                with self.db_manager.transaction() as conn:
+                    conn.execute("DELETE FROM Saves WHERE save_id = ?", (save_id,))
+
+                logger.info(f"Deleted save {save_id!r} ({info['filename']})")
+                return jsonify({
+                    'success': True,
+                    'message': f"Save '{info['filename']}' deleted",
+                    'save_id': save_id,
+                    'playthrough_id': info.get('playthrough_id'),
+                })
+
+            except Exception as e:
+                logger.error(f"Error deleting save {save_id!r}: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/import/metrics', methods=['POST'])
+        def import_metrics():
+            """Import country metrics from a previously exported CSV or JSON file.
+
+            Accepts multipart/form-data with a 'file' field.
+            Re-creates synthetic Save + Country records as needed so that the
+            original metric values can be queried normally after import.
+            """
+            try:
+                if 'file' not in request.files:
+                    return jsonify({'error': "No file field in request (use multipart/form-data, field name 'file')"}), 400
+
+                upload = request.files['file']
+                content = upload.read().decode('utf-8', errors='replace')
+                fname = (upload.filename or '').lower()
+
+                if fname.endswith('.json'):
+                    parsed = _json.loads(content)
+                    rows = parsed.get('metrics', parsed) if isinstance(parsed, dict) else parsed
+                else:  # CSV (default)
+                    reader = csv.DictReader(io.StringIO(content))
+                    rows = list(reader)
+
+                if not rows:
+                    return jsonify({'error': 'File is empty or could not be parsed'}), 400
+
+                now_iso = datetime.now().isoformat()
+                # Caches to avoid repeated DB lookups within one import
+                save_cache: dict = {}     # (playthrough_id, date) -> save_id
+                country_cache: dict = {}  # (save_id, country_tag) -> country_id
+                imported = 0
+                skipped = 0
+
+                for row in rows:
+                    pt_id        = (row.get('playthrough_id') or '').strip()
+                    date         = (row.get('in_game_date')   or '').strip()
+                    country_tag  = (row.get('country_tag')    or '').strip().upper()
+                    metric_name  = (row.get('metric_name')    or '').strip()
+                    amount_raw   = row.get('amount')
+
+                    if not all([pt_id, date, country_tag, metric_name]):
+                        skipped += 1
+                        continue
+                    if len(country_tag) != 3:
+                        skipped += 1
+                        continue
+                    try:
+                        amount = float(amount_raw) if amount_raw is not None else 0.0
+                    except (TypeError, ValueError):
+                        skipped += 1
+                        continue
+
+                    save_key = (pt_id, date)
+                    if save_key not in save_cache:
+                        existing_save = self.db_manager.execute_query(
+                            "SELECT save_id FROM Saves WHERE playthrough_id=? AND in_game_date=? LIMIT 1",
+                            (pt_id, date)
+                        )
+                        if existing_save:
+                            save_cache[save_key] = existing_save[0]['save_id']
+                        else:
+                            new_sid = str(uuid.uuid4())
+                            try:
+                                with self.db_manager.transaction() as conn:
+                                    conn.execute(
+                                        """INSERT INTO Saves
+                                               (save_id, playthrough_id, filename,
+                                                saved_at, in_game_date, file_size)
+                                           VALUES (?, ?, ?, ?, ?, 1)""",
+                                        (new_sid, pt_id, f'import_{date}.v3',
+                                         now_iso, date)
+                                    )
+                                save_cache[save_key] = new_sid
+                            except Exception as ex:
+                                logger.warning(f"import_metrics: could not create save for {save_key}: {ex}")
+                                skipped += 1
+                                continue
+
+                    save_id = save_cache[save_key]
+
+                    country_key = (save_id, country_tag)
+                    if country_key not in country_cache:
+                        existing_c = self.db_manager.execute_query(
+                            "SELECT country_id FROM Countries WHERE save_id=? AND country_tag=? LIMIT 1",
+                            (save_id, country_tag)
+                        )
+                        if existing_c:
+                            country_cache[country_key] = existing_c[0]['country_id']
+                        else:
+                            try:
+                                with self.db_manager.transaction() as conn:
+                                    conn.execute(
+                                        "INSERT OR IGNORE INTO Countries (country_tag, save_id, name) VALUES (?, ?, ?)",
+                                        (country_tag, save_id, country_tag)
+                                    )
+                                fresh = self.db_manager.execute_query(
+                                    "SELECT country_id FROM Countries WHERE save_id=? AND country_tag=?",
+                                    (save_id, country_tag)
+                                )
+                                country_cache[country_key] = fresh[0]['country_id']
+                            except Exception as ex:
+                                logger.warning(f"import_metrics: could not create country {country_tag}: {ex}")
+                                skipped += 1
+                                continue
+
+                    country_id = country_cache[country_key]
+
+                    mt_rows = self.db_manager.execute_query(
+                        "SELECT metric_type_id FROM MetricTypes WHERE name=?", (metric_name,)
+                    )
+                    if not mt_rows:
+                        display_name = (row.get('display_name') or metric_name)
+                        unit = (row.get('unit') or '')
+                        try:
+                            with self.db_manager.transaction() as conn:
+                                conn.execute(
+                                    "INSERT OR IGNORE INTO MetricTypes (name, display_name, unit) VALUES (?, ?, ?)",
+                                    (metric_name, display_name, unit)
+                                )
+                        except Exception:
+                            pass
+                        mt_rows = self.db_manager.execute_query(
+                            "SELECT metric_type_id FROM MetricTypes WHERE name=?", (metric_name,)
+                        )
+                    if not mt_rows:
+                        skipped += 1
+                        continue
+
+                    mt_id = mt_rows[0]['metric_type_id']
+
+                    try:
+                        with self.db_manager.transaction() as conn:
+                            conn.execute(
+                                """INSERT OR IGNORE INTO CountryMetrics
+                                       (country_id, metric_type_id, amount, recorded_at, save_id)
+                                   VALUES (?, ?, ?, ?, ?)""",
+                                (country_id, mt_id, amount, date, save_id)
+                            )
+                        imported += 1
+                    except Exception as ex:
+                        logger.warning(f"import_metrics: could not insert metric: {ex}")
+                        skipped += 1
+
+                return jsonify({
+                    'success': True,
+                    'imported': imported,
+                    'skipped': skipped,
+                    'message': f"Imported {imported} metric rows, skipped {skipped}",
+                })
+
+            except Exception as e:
+                logger.error(f"Error importing metrics: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/import/wars', methods=['POST'])
+        def import_wars():
+            """Import war data from a previously exported CSV or JSON file.
+
+            Restores the Wars records (no participant/battle detail — that data
+            is aggregated in the export and cannot be fully reconstructed).
+            Creates one synthetic Save per unique playthrough_id if no save
+            exists yet for that playthrough.
+            """
+            try:
+                if 'file' not in request.files:
+                    return jsonify({'error': "No file field in request (use multipart/form-data, field name 'file')"}), 400
+
+                upload = request.files['file']
+                content = upload.read().decode('utf-8', errors='replace')
+                fname = (upload.filename or '').lower()
+
+                if fname.endswith('.json'):
+                    parsed = _json.loads(content)
+                    rows = parsed.get('wars', parsed) if isinstance(parsed, dict) else parsed
+                else:
+                    reader = csv.DictReader(io.StringIO(content))
+                    rows = list(reader)
+
+                if not rows:
+                    return jsonify({'error': 'File is empty or could not be parsed'}), 400
+
+                now_iso = datetime.now().isoformat()
+                save_cache: dict = {}   # playthrough_id -> save_id
+                imported = 0
+                skipped = 0
+
+                for row in rows:
+                    pt_id      = (row.get('playthrough_id') or '').strip()
+                    save_war_id = (row.get('save_war_id')   or '').strip()
+                    war_type   = (row.get('war_type')       or 'unknown').strip()
+                    started_on = (row.get('started_on')     or '').strip()
+                    ended_on   = (row.get('ended_on')       or None)
+                    status     = (row.get('status')         or 'ended').strip()
+                    strategic_region = (row.get('strategic_region') or None)
+
+                    if not all([pt_id, save_war_id, started_on]):
+                        skipped += 1
+                        continue
+                    if status not in ('ongoing', 'ended', 'white_peace'):
+                        status = 'ended'
+                    if ended_on == '' or ended_on is None:
+                        ended_on = None
+
+                    if pt_id not in save_cache:
+                        existing_save = self.db_manager.execute_query(
+                            "SELECT save_id FROM Saves WHERE playthrough_id=? LIMIT 1",
+                            (pt_id,)
+                        )
+                        if existing_save:
+                            save_cache[pt_id] = existing_save[0]['save_id']
+                        else:
+                            new_sid = str(uuid.uuid4())
+                            placeholder_date = started_on or '1836-01-01'
+                            try:
+                                with self.db_manager.transaction() as conn:
+                                    conn.execute(
+                                        """INSERT INTO Saves
+                                               (save_id, playthrough_id, filename,
+                                                saved_at, in_game_date, file_size)
+                                           VALUES (?, ?, ?, ?, ?, 1)""",
+                                        (new_sid, pt_id,
+                                         f'import_wars_{placeholder_date}.v3',
+                                         now_iso, placeholder_date)
+                                    )
+                                save_cache[pt_id] = new_sid
+                            except Exception as ex:
+                                logger.warning(f"import_wars: could not create save for {pt_id}: {ex}")
+                                skipped += 1
+                                continue
+
+                    save_id = save_cache[pt_id]
+
+                    try:
+                        with self.db_manager.transaction() as conn:
+                            conn.execute(
+                                """INSERT OR IGNORE INTO Wars
+                                       (save_war_id, playthrough_id, save_id,
+                                        war_type, strategic_region,
+                                        started_on, ended_on, status)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (save_war_id, pt_id, save_id,
+                                 war_type, strategic_region,
+                                 started_on, ended_on, status)
+                            )
+                        imported += 1
+                    except Exception as ex:
+                        logger.warning(f"import_wars: could not insert war: {ex}")
+                        skipped += 1
+
+                return jsonify({
+                    'success': True,
+                    'imported': imported,
+                    'skipped': skipped,
+                    'message': f"Imported {imported} war records, skipped {skipped}",
+                })
+
+            except Exception as e:
+                logger.error(f"Error importing wars: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/export/country-html/<country_tag>', methods=['GET'])
+        def export_country_html(country_tag: str):
+            """Export a country's full stats as a self-contained offline HTML file.
+
+            Query params:
+              - playthrough_id (required): which playthrough to export
+            """
+            try:
+                from .export_html import generate_country_html
+
+                playthrough_id = (request.args.get('playthrough_id') or '').strip()
+                if not playthrough_id:
+                    return jsonify({'error': 'playthrough_id parameter is required'}), 400
+
+                tag = country_tag.upper()
+
+                pt_check = self.db_manager.execute_query(
+                    "SELECT COUNT(*) AS cnt FROM Saves WHERE playthrough_id = ?",
+                    (playthrough_id,),
+                )
+                if not pt_check or pt_check[0]['cnt'] == 0:
+                    return jsonify({'error': 'Playthrough not found'}), 404
+
+                html_content = generate_country_html(
+                    self.db_manager, self.data_access, tag, playthrough_id
+                )
+
+                pt_short = playthrough_id[:8]
+                filename = f'{tag}_{pt_short}.html'
+
+                return Response(
+                    html_content,
+                    mimetype='text/html; charset=utf-8',
+                    headers={
+                        'Content-Disposition': f'attachment; filename="{filename}"',
+                        'Cache-Control': 'no-store',
+                    },
+                )
+
+            except Exception as e:
+                logger.error(f'Error generating HTML export for {country_tag}: {e}', exc_info=True)
                 return jsonify({'error': str(e)}), 500
 
     def run(self, host: str = '127.0.0.1', port: int = None, debug: bool = False):

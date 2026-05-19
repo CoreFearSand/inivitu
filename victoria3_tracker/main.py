@@ -19,7 +19,6 @@ from .web import WebServer
 
 logger = logging.getLogger(__name__)
 
-# --- Application-level constants ---
 STATS_LOG_INTERVAL_SECONDS = 300       # Log stats every 5 minutes
 MAX_ERRORS_BEFORE_SHUTDOWN = 10        # Consecutive errors before giving up
 ERROR_RATE_WINDOW_SECONDS = 60         # Time window for error rate check
@@ -37,22 +36,18 @@ class Victoria3Tracker:
         self.config_manager = ConfigManager(config_path)
         self.running = False
         self.web_only_mode = False
-        
-        # Components
+
         self.database_manager = None
         self.data_processor = None
         self.file_monitor = None
         self.processing_queue = None
         self.web_server = None
-        
-        # Threading
+
         self.main_thread = None
-        
-        # Error tracking
+
         self.error_count = 0
         self.last_error_time = 0
-        
-        # Setup signal handlers for graceful shutdown
+
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
@@ -68,46 +63,39 @@ class Victoria3Tracker:
             True if initialization successful, False otherwise
         """
         try:
-            # Setup logging
             setup_logging(
                 log_level=self.config_manager.get("log_level", "INFO"),
                 log_file="logs/victoria3_tracker.log"
             )
             
             logger.info("Starting Victoria 3 Game Tracker initialization...")
-            
-            # Validate configuration
+
             if not self.config_manager.validate_config():
                 logger.error("Configuration validation failed")
                 return False
             
             logger.info("Configuration validation passed")
-            
-            # Initialize database manager
+
             db_path = self.config_manager.get_database_path()
             self.database_manager = DatabaseManager(db_path)
             logger.info("Database manager initialized")
-            
-            # Initialize data processor
+
             self.data_processor = DataProcessor(self.config_manager, self.database_manager)
             logger.info("Data processor initialized")
-            
-            # Validate processing environment
+
             env_validation = self.data_processor.validate_processing_environment()
             if not env_validation['valid']:
                 logger.error(f"Processing environment validation failed: {env_validation['errors']}")
                 return False
-            
-            # Initialize file processing components (unless web-only mode)
+
+
             if not self.web_only_mode:
-                # Initialize file processing queue
                 self.processing_queue = FileProcessingQueue(
                     self.config_manager, 
                     self._process_save_file
                 )
                 logger.info("File processing queue initialized")
-                
-                # Initialize file monitor
+
                 self.file_monitor = FileMonitor(
                     self.config_manager,
                     self._queue_file_for_processing
@@ -115,8 +103,7 @@ class Victoria3Tracker:
                 logger.info("File monitor initialized")
             else:
                 logger.info("Skipping file monitoring components (web-only mode)")
-            
-            # Initialize web server
+
             self.web_server = WebServer(self.config_manager, self.database_manager)
             logger.info("Web server initialized")
             
@@ -136,10 +123,8 @@ class Victoria3Tracker:
         try:
             self.running = True
             logger.info("Victoria 3 Game Tracker starting all services...")
-            
-            # Start file processing components (unless web-only mode)
+
             if not self.web_only_mode:
-                # Start file processing queue
                 self.processing_queue.start()
                 logger.info("File processing queue started")
                 
@@ -148,8 +133,7 @@ class Victoria3Tracker:
                 logger.info("File monitor started")
             else:
                 logger.info("File monitoring disabled (web-only mode)")
-            
-            # Start web server in a separate thread
+
             web_thread = threading.Thread(
                 target=self._run_web_server,
                 daemon=True,
@@ -161,8 +145,7 @@ class Victoria3Tracker:
             logger.info("Victoria 3 Game Tracker started successfully")
             logger.info(f"Web interface available at: http://127.0.0.1:{self.config_manager.get('web_port', 8080)}")
             logger.info("Press Ctrl+C to stop")
-            
-            # Keep the main thread alive and monitor components
+
             self._main_loop()
                 
         except KeyboardInterrupt:
@@ -222,43 +205,37 @@ class Victoria3Tracker:
             try:
                 time.sleep(1)
 
-                # Periodically log statistics
                 current_time = time.time()
                 if current_time - last_stats_log > STATS_LOG_INTERVAL_SECONDS:
                     self._log_statistics()
                     last_stats_log = current_time
-                
-                # Check component health
+
                 if not self._check_component_health():
                     logger.warning("Component health check failed")
                 
             except Exception as e:
                 logger.error(f"Error in main loop: {e}")
-                time.sleep(5)  # Brief pause before retrying
+                time.sleep(5)
     
     def _log_statistics(self):
         """Log application statistics."""
         try:
-            # Database stats
             db_stats = self.database_manager.get_database_stats()
             logger.info(f"Database: {db_stats.get('saves_count', 0)} saves, "
                        f"{db_stats.get('countries_count', 0)} countries, "
                        f"{db_stats.get('countrymetrics_count', 0)} metrics")
-            
-            # Processing stats
+
             if self.data_processor:
                 proc_stats = self.data_processor.get_processing_stats()
                 logger.info(f"Processing: {proc_stats.get('files_processed', 0)} files processed, "
                            f"{proc_stats.get('files_failed', 0)} failed, "
                            f"avg time: {proc_stats.get('average_processing_time', 0):.2f}s")
-            
-            # Queue stats
+
             if self.processing_queue:
                 queue_stats = self.processing_queue.get_stats()
                 logger.info(f"Queue: {queue_stats.get('queue_size', 0)} pending, "
                            f"{queue_stats.get('workers_active', 0)} workers active")
-            
-            # Monitor stats
+
             if self.file_monitor:
                 monitor_stats = self.file_monitor.get_status()
                 logger.info(f"Monitor: {monitor_stats.get('processed_files_count', 0)} files tracked, "
@@ -270,7 +247,6 @@ class Victoria3Tracker:
     def _check_component_health(self) -> bool:
         """Check health of all components."""
         try:
-            # Check if components are still running
             if self.file_monitor and not self.file_monitor.running:
                 logger.warning("File monitor is not running")
                 return False
@@ -316,7 +292,6 @@ class Victoria3Tracker:
             if self.data_processor:
                 success = self.data_processor.process_save_file(file_path)
 
-                # Broadcast update via WebSocket if enabled and processing succeeded
                 if success and self.web_server and self.web_server.websocket_handler:
                     try:
                         self.web_server.websocket_handler.broadcast_new_save({
@@ -345,7 +320,6 @@ class Victoria3Tracker:
             True if processing succeeded
         """
         try:
-            # Initialize minimal components for single file processing
             if not self.initialize():
                 return False
             
@@ -354,14 +328,13 @@ class Victoria3Tracker:
             if not file_path.exists():
                 print(f"Error: File not found: {file_path}")
                 return False
-            
-            # Process the file
+
+
             success = self.data_processor.process_save_file(file_path)
             
             if success:
                 print("✓ File processed successfully")
-                
-                # Show some basic stats
+
                 stats = self.database_manager.get_database_stats()
                 print(f"Database now contains:")
                 print(f"  - {stats.get('saves_count', 0)} saves")
@@ -371,13 +344,12 @@ class Victoria3Tracker:
                 print("✗ File processing failed")
             
             return success
-            
+
         except Exception as e:
             print(f"Error: {e}")
             logger.error(f"Error in single file processing: {e}", exc_info=True)
             return False
         finally:
-            # Clean up
             if self.database_manager:
                 self.database_manager.close()
     
@@ -401,8 +373,7 @@ class Victoria3Tracker:
                 'error_count': self.error_count,
                 'last_error_time': self.last_error_time
             }
-            
-            # Add component-specific status
+
             if self.database_manager:
                 status['database_stats'] = self.database_manager.get_database_stats()
             
@@ -433,8 +404,7 @@ class Victoria3Tracker:
         
         error_msg = f"Error in {context}: {error}" if context else f"Error: {error}"
         logger.error(error_msg, exc_info=True)
-        
-        # If too many errors in a short time, consider shutting down
+
         if self.error_count > MAX_ERRORS_BEFORE_SHUTDOWN and (time.time() - self.last_error_time) < ERROR_RATE_WINDOW_SECONDS:
             logger.critical("Too many errors in short time, initiating shutdown")
             self.running = False
@@ -483,14 +453,11 @@ Examples:
     args = parser.parse_args()
     
     try:
-        # Create tracker instance
         tracker = Victoria3Tracker(args.config)
-        
-        # Override log level if specified
+
         if args.log_level:
             tracker.config_manager.set("log_level", args.log_level)
-        
-        # Handle special modes
+
         if args.validate_config:
             print("Validating configuration...")
             if tracker.config_manager.validate_config():
@@ -504,13 +471,11 @@ Examples:
             print(f"Processing single file: {args.process_file}")
             success = tracker._process_single_file(Path(args.process_file))
             sys.exit(0 if success else 1)
-        
-        # Set web-only mode
+
         if args.web_only:
             tracker.web_only_mode = True
             print("Starting in web-only mode (no file monitoring)")
-        
-        # Start the application
+
         tracker.start()
         
     except KeyboardInterrupt:
