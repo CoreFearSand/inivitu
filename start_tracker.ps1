@@ -27,7 +27,7 @@ function Test-Python {
     try {
         $pythonVersion = python --version 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "✅ Python found: $pythonVersion" -ForegroundColor Green
+            Write-Host " Python found: $pythonVersion" -ForegroundColor Green
             return $true
         }
     }
@@ -35,7 +35,7 @@ function Test-Python {
         # Python not found
     }
     
-    Write-Host "❌ Python is not installed or not in PATH" -ForegroundColor Red
+    Write-Host " Python is not installed or not in PATH" -ForegroundColor Red
     Write-Host "   Please install Python 3.8+ and try again" -ForegroundColor Yellow
     Write-Host "   Download from: https://www.python.org/downloads/" -ForegroundColor Yellow
     return $false
@@ -44,7 +44,7 @@ function Test-Python {
 function Test-Environment {
     # Check if we're in the right directory
     if (-not (Test-Path "victoria3_tracker.py")) {
-        Write-Host "❌ victoria3_tracker.py not found" -ForegroundColor Red
+        Write-Host " victoria3_tracker.py not found" -ForegroundColor Red
         Write-Host "   Please run this script from the Victoria 3 Game Tracker directory" -ForegroundColor Yellow
         return $false
     }
@@ -77,24 +77,24 @@ function Start-Application {
     
     switch ($Mode) {
         "full" {
-            Write-Host "🚀 Starting full application..." -ForegroundColor Green
+            Write-Host " Starting full application..." -ForegroundColor Green
             # No additional arguments needed
         }
         "web-only" {
-            Write-Host "🌐 Starting web interface only..." -ForegroundColor Green
+            Write-Host " Starting web interface only..." -ForegroundColor Green
             $arguments += "--web-only"
         }
         "install" {
-            Write-Host "⚙️ Running installation..." -ForegroundColor Green
+            Write-Host " Running installation..." -ForegroundColor Green
             python install.py
             return
         }
         "status" {
-            Write-Host "📊 Checking status..." -ForegroundColor Green
+            Write-Host " Checking status..." -ForegroundColor Green
             $arguments += "--status"
         }
         "help" {
-            Write-Host "📖 Showing help..." -ForegroundColor Green
+            Write-Host " Showing help..." -ForegroundColor Green
             $arguments += "--help"
         }
     }
@@ -108,7 +108,7 @@ function Start-Application {
         }
     }
     catch {
-        Write-Host "❌ Failed to start application: $_" -ForegroundColor Red
+        Write-Host " Failed to start application: $_" -ForegroundColor Red
     }
 }
 
@@ -163,7 +163,7 @@ if ($Action -eq "menu") {
         4 { Start-Application "status" }
         5 { Start-Application "help" }
         6 { 
-            Write-Host "👋 Goodbye!" -ForegroundColor Green
+            Write-Host " Goodbye!" -ForegroundColor Green
             exit 0
         }
     }

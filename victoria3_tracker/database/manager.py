@@ -16,9 +16,12 @@ from .schema import create_schema, migrate_schema, verify_schema, get_schema_ver
 
 logger = logging.getLogger(__name__)
 
+_STATS_TTL = 60.0  # seconds between full COUNT(*) recomputes
+
+
 class DatabaseManager:
     """Manages SQLite database connections and operations."""
-    
+
     def __init__(self, database_path: Path, max_retries: int = 3):
         """Initialize database manager.
         
@@ -31,6 +34,8 @@ class DatabaseManager:
         self._local = threading.local()
         self._lock = threading.Lock()
         self._initialized = False
+        self._stats_cache: dict = {}
+        self._stats_cache_ts: float = 0.0
 
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -218,12 +223,22 @@ class DatabaseManager:
             logger.error(f"Failed to get table info for {table_name}: {e}")
             raise
     
+    def invalidate_stats_cache(self) -> None:
+        """Force the next get_database_stats call to recompute counts."""
+        self._stats_cache_ts = 0.0
+
     def get_database_stats(self) -> Dict[str, Any]:
         """Get database statistics and health information.
-        
+
+        Row counts are cached for _STATS_TTL seconds to avoid five full-table
+        scans on every dashboard/health-check request.
+
         Returns:
             Dictionary containing database statistics
         """
+        if self._stats_cache and (time.time() - self._stats_cache_ts) < _STATS_TTL:
+            return self._stats_cache
+
         try:
             stats = {}
 
@@ -252,7 +267,9 @@ class DatabaseManager:
             except Exception as e:
                 logger.warning(f"Could not get journal mode: {e}")
                 stats['journal_mode'] = 'unknown'
-            
+
+            self._stats_cache = stats
+            self._stats_cache_ts = time.time()
             return stats
             
         except Exception as e:

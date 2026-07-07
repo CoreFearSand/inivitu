@@ -106,29 +106,32 @@ class SaveFileParser:
             process = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=False,          # Capture raw bytes; decode manually as UTF-8
                 timeout=self.timeout,
                 check=False  # Don't raise on non-zero exit, we'll handle it
             )
-            
+
             processing_time = time.time() - start_time
 
+            stdout_text = process.stdout.decode('utf-8', errors='replace') if process.stdout else ''
+            stderr_text = process.stderr.decode('utf-8', errors='replace') if process.stderr else ''
+
             if process.returncode != 0:
-                error_msg = process.stderr or process.stdout or f"Exit code: {process.returncode}"
+                error_msg = stderr_text or stdout_text or f"Exit code: {process.returncode}"
                 logger.error(f"rakaly failed: {error_msg}")
                 raise RuntimeError(f"rakaly conversion failed: {error_msg}")
 
-            if not process.stdout:
+            if not stdout_text:
                 raise RuntimeError("rakaly produced no output")
 
             try:
-                parsed_data = json.loads(process.stdout)
+                parsed_data = json.loads(stdout_text)
                 logger.info(f"Successfully parsed save file in {processing_time:.2f}s")
                 return parsed_data
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse rakaly JSON output: {e}")
-                output_preview = process.stdout[:500] + "..." if len(process.stdout) > 500 else process.stdout
+                output_preview = stdout_text[:500] + "..." if len(stdout_text) > 500 else stdout_text
                 logger.debug(f"rakaly output preview: {output_preview}")
                 raise RuntimeError(f"Invalid JSON from rakaly: {e}")
         

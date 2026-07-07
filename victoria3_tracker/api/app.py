@@ -263,6 +263,19 @@ class Victoria3API:
 
                 # D99 = virtual Global country: aggregate across all real countries
                 if country_tag == 'D99':
+                    if metric_name:
+                        history_rows = self.data_access.get_global_metrics_history(
+                            metric_name, playthrough_id, limit
+                        )
+                        return jsonify({
+                            'country_tag': 'D99',
+                            'playthrough_id': playthrough_id,
+                            'metrics': {},
+                            'history': [
+                                {'date': r['in_game_date'], 'value': r['amount']}
+                                for r in history_rows
+                            ],
+                        })
                     latest_list = self.data_access.get_global_metrics_latest(playthrough_id)
                     metrics_dict = {}
                     for row in latest_list:
@@ -274,20 +287,11 @@ class Victoria3API:
                             'display_name': row.get('display_name', name),
                             'unit': row.get('unit', ''),
                         }
-                    response = {
+                    return jsonify({
                         'country_tag': 'D99',
                         'playthrough_id': playthrough_id,
                         'metrics': metrics_dict,
-                    }
-                    if metric_name:
-                        history_rows = self.data_access.get_global_metrics_history(
-                            metric_name, playthrough_id, limit
-                        )
-                        response['history'] = [
-                            {'date': r['in_game_date'], 'value': r['amount']}
-                            for r in history_rows
-                        ]
-                    return jsonify(response)
+                    })
 
                 if playthrough_id:
                     latest_list = self.data_access.get_latest_metrics_for_country_playthrough(
@@ -325,7 +329,7 @@ class Victoria3API:
 
                     history_rows = sorted(
                         history_rows,
-                        key=lambda r: r.get('in_game_date') or r.get('recorded_at') or ''
+                        key=lambda r: str(r.get('in_game_date') or r.get('recorded_at') or '')
                     )
 
                     response['history'] = [

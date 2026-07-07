@@ -783,7 +783,7 @@ endblock %} {% block content %}
               ticks: {
                 callback: function (value) {
                   if (metricName.includes("literacy")) {
-                    return (value * 100).toFixed(1) + "%";
+                    return Math.round(value * 100) + "%";
                   }
                   return formatNumber(value);
                 },
@@ -800,9 +800,11 @@ endblock %} {% block content %}
               intersect: false,
               callbacks: {
                 label: function (context) {
-                  return `${context.dataset.label}: ${formatNumber(
-                    context.parsed.y
-                  )}`;
+                  const v = context.parsed.y;
+                  const fmtV = metricName.includes("literacy")
+                    ? Math.round(v * 100) + "%"
+                    : formatNumber(v);
+                  return `${context.dataset.label}: ${fmtV}`;
                 },
               },
             },

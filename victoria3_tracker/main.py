@@ -91,7 +91,7 @@ class Victoria3Tracker:
 
             if not self.web_only_mode:
                 self.processing_queue = FileProcessingQueue(
-                    self.config_manager, 
+                    self.config_manager,
                     self._process_save_file
                 )
                 logger.info("File processing queue initialized")
@@ -104,10 +104,10 @@ class Victoria3Tracker:
             else:
                 logger.info("Skipping file monitoring components (web-only mode)")
 
-            self.web_server = WebServer(self.config_manager, self.database_manager)
-            logger.info("Web server initialized")
-            
-            logger.info("Victoria 3 Game Tracker initialized successfully")
+            # Web server is intentionally NOT initialized here.
+            # It is created inside _run_web_server() so that a slow Flask/import
+            # startup never delays the file monitor.
+            logger.info("Victoria 3 Game Tracker initialized successfully (web server deferred)")
             return True
             
         except Exception as e:
@@ -188,14 +188,21 @@ class Victoria3Tracker:
         logger.info("Victoria 3 Game Tracker shutdown complete")
     
     def _run_web_server(self):
-        """Run the web server in a separate thread."""
+        """Initialize and run the web server in a background thread.
+
+        Deliberately separated from initialize() so that a slow Flask or
+        database startup never delays the file monitor.  Failures here are
+        logged but do NOT shut down the tracker.
+        """
+        host = '127.0.0.1'
+        port = self.config_manager.get('web_port', 8080)
         try:
-            host = '127.0.0.1'
-            port = self.config_manager.get('web_port', 8080)
+            logger.info("Web server thread: initializing Flask app...")
+            self.web_server = WebServer(self.config_manager, self.database_manager)
+            logger.info(f"Web server ready, binding on {host}:{port}")
             self.web_server.run(host=host, port=port, debug=False)
         except Exception as e:
-            logger.error(f"Web server error: {e}")
-            self.running = False
+            logger.error(f"Web server error (tracker continues): {e}")
     
     def _main_loop(self):
         """Main application loop with component monitoring."""

@@ -3,7 +3,7 @@
  */
 
 const API_BASE_URL = window.location.origin;
-const API_TIMEOUT = 10000; // 10 seconds
+const API_TIMEOUT = 30000; // 30 seconds (global aggregate queries can be slow)
 
 /**
  * Make an API request
@@ -255,6 +255,17 @@ function formatNumber(value, options = {}) {
     } catch (error) {
         return value.toString();
     }
+}
+
+// Metrics stored as 0-1 fractions that should display as whole percentages.
+const PERCENT_METRICS = new Set(['literacy']);
+
+function formatMetricValue(metric, value) {
+    if (value === null || value === undefined) return '-';
+    if (PERCENT_METRICS.has(metric)) {
+        return Math.round(value * 100) + '%';
+    }
+    return formatNumber(value);
 }
 
 /**

@@ -222,6 +222,14 @@ CREATE INDEX IF NOT EXISTS idx_country_laws_activation_date ON CountryLaws(activ
 CREATE INDEX IF NOT EXISTS idx_territories_save_id ON Territories(save_id);
 CREATE INDEX IF NOT EXISTS idx_territories_country_id ON Territories(country_id);
 CREATE INDEX IF NOT EXISTS idx_territories_province_id ON Territories(province_id);
+
+-- Performance indexes (v1.6.0)
+-- idx_saves_in_game_date: lets MAX(in_game_date) use an index seek instead of full scan
+CREATE INDEX IF NOT EXISTS idx_saves_in_game_date ON Saves(in_game_date);
+-- idx_saves_playthrough_date: covers WHERE playthrough_id=? ORDER/MAX BY in_game_date
+CREATE INDEX IF NOT EXISTS idx_saves_playthrough_date ON Saves(playthrough_id, in_game_date);
+-- idx_metrics_country_type_date: makes the LatestCountryMetrics correlated subquery O(log n)
+CREATE INDEX IF NOT EXISTS idx_metrics_country_type_date ON CountryMetrics(country_id, metric_type_id, recorded_at);
 """
 
 VIEWS_SQL = """
@@ -383,6 +391,14 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
         connection: SQLite database connection
     """
     cursor = connection.cursor()
+
+    # Tracking table so one-time migrations are never re-applied on subsequent boots.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS SchemaMigrations (
+            migration_id TEXT PRIMARY KEY,
+            applied_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     # -----------------------------------------------------------------------
     # v1.2.0 — war naming / GP detection columns
@@ -617,32 +633,54 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     # v1.5.1 - Backfill CountryLaws with corrected group/label/color/category
     #          after law_definitions were reclassified (e.g. policing split
     #          from internal_security, labor_associations from labor_rights, etc.)
+    # Guarded by SchemaMigrations so it only runs once, not on every boot.
     # -----------------------------------------------------------------------
-    try:
-        from ..parser.law_definitions import LAW_GROUPS, LAW_TO_GROUP, LAW_LABELS
-        updated = 0
-        for law_key, group_key in LAW_TO_GROUP.items():
-            group = LAW_GROUPS[group_key]
-            cursor.execute("""
-                UPDATE CountryLaws
-                SET law_group   = ?,
-                    law_label   = ?,
-                    group_label = ?,
-                    group_color = ?,
-                    category    = ?
-                WHERE law_key = ?
-            """, (
-                group_key,
-                LAW_LABELS[law_key],
-                group['label'],
-                group['color'],
-                group['category'],
-                law_key,
-            ))
-            updated += cursor.rowcount
-        logger.info("Migration v1.5.1: backfilled %d CountryLaws rows with corrected metadata.", updated)
-    except Exception as _e:
-        logger.warning("Migration v1.5.1 backfill skipped: %s", _e)
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.5.1'")
+    if not cursor.fetchone():
+        try:
+            from ..parser.law_definitions import LAW_GROUPS, LAW_TO_GROUP, LAW_LABELS
+            updated = 0
+            for law_key, group_key in LAW_TO_GROUP.items():
+                group = LAW_GROUPS[group_key]
+                cursor.execute("""
+                    UPDATE CountryLaws
+                    SET law_group   = ?,
+                        law_label   = ?,
+                        group_label = ?,
+                        group_color = ?,
+                        category    = ?
+                    WHERE law_key = ?
+                """, (
+                    group_key,
+                    LAW_LABELS[law_key],
+                    group['label'],
+                    group['color'],
+                    group['category'],
+                    law_key,
+                ))
+                updated += cursor.rowcount
+            logger.info("Migration v1.5.1: backfilled %d CountryLaws rows with corrected metadata.", updated)
+            cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.5.1')")
+        except Exception as _e:
+            logger.warning("Migration v1.5.1 backfill skipped: %s", _e)
+    else:
+        logger.debug("Migration v1.5.1 already applied, skipping.")
+
+    # -----------------------------------------------------------------------
+    # v1.6.0 - Performance indexes for date-range and latest-metric queries.
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.6.0'")
+    if not cursor.fetchone():
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_saves_in_game_date ON Saves(in_game_date)",
+            "CREATE INDEX IF NOT EXISTS idx_saves_playthrough_date ON Saves(playthrough_id, in_game_date)",
+            "CREATE INDEX IF NOT EXISTS idx_metrics_country_type_date ON CountryMetrics(country_id, metric_type_id, recorded_at)",
+        ]:
+            cursor.execute(idx_sql)
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.6.0')")
+        logger.info("Migration v1.6.0: added 3 performance indexes.")
+    else:
+        logger.debug("Migration v1.6.0 already applied, skipping.")
 
     connection.commit()
 

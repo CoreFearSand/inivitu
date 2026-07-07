@@ -250,7 +250,7 @@ async function loadMetricsTable() {
  */
 function createMetricTableRow(metric, metricData) {
     const metricName = metric.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    const value = formatNumber(metricData.latest_value);
+    const value = formatMetricValue(metric, metricData.latest_value);
     const change = metricData.change_percent;
     const date = formatGameDate(metricData.latest_date);
     const rank = metricData.rank || '-';
@@ -393,10 +393,13 @@ function updateChart(chartType, data, metric) {
                     ticks: {
                         maxTicksLimit: 8,
                         maxRotation: 30,
-                        // Show only YYYY-MM so labels don't crowd each other.
-                        callback: function(val, index) {
-                            const label = chartLabels[index];
-                            return label ? label.slice(0, 7) : '';
+                        // Chart.js passes the label text as `val` for category
+                        // scales (it calls getLabelForValue before invoking the
+                        // callback).  Use it directly rather than re-indexing
+                        // into chartLabels, then coerce to string as a safety net.
+                        callback: function(val) {
+                            if (val == null) return '';
+                            return String(val).slice(0, 7);
                         }
                     }
                 },
@@ -407,7 +410,7 @@ function updateChart(chartType, data, metric) {
                     },
                     ticks: {
                         callback: function(value) {
-                            return formatNumber(value);
+                            return formatMetricValue(metric, value);
                         }
                     }
                 }
@@ -425,7 +428,7 @@ function updateChart(chartType, data, metric) {
                             return chartLabels[idx] || '';
                         },
                         label: function(context) {
-                            return `${context.dataset.label}: ${formatNumber(context.parsed.y)}`;
+                            return `${context.dataset.label}: ${formatMetricValue(metric, context.parsed.y)}`;
                         }
                     }
                 }
@@ -456,12 +459,12 @@ async function loadRankings(metric = 'gdp') {
 
             rankings.slice(0, 5).forEach((country, index) => {
                 const isCurrent = country.country_tag === window.countryData.tag;
-                html += createRankingTableRow(country, index, isCurrent);
+                html += createRankingTableRow(country, index, isCurrent, metric);
             });
 
             if (currentIdx >= 5) {
                 html += `<tr><td colspan="4" class="text-center text-muted py-1" style="letter-spacing:2px;">···</td></tr>`;
-                html += createRankingTableRow(rankings[currentIdx], currentIdx, true);
+                html += createRankingTableRow(rankings[currentIdx], currentIdx, true, metric);
             } else if (currentIdx === -1) {
                 html += `<tr><td colspan="4" class="text-center text-muted"><small>Not ranked for this metric</small></td></tr>`;
             }
@@ -480,10 +483,10 @@ async function loadRankings(metric = 'gdp') {
 /**
  * Create a single ranking table row.
  */
-function createRankingTableRow(country, index, isCurrentCountry) {
+function createRankingTableRow(country, index, isCurrentCountry, metric = '') {
     const rank  = index + 1;
     const name  = getCountryName(country.country_tag);
-    const value = formatNumber(country.amount);
+    const value = formatMetricValue(metric, country.amount);
     const rowClass   = isCurrentCountry ? 'table-primary' : '';
     const badgeClass = rank === 1 ? 'bg-warning text-dark'
                      : rank === 2 ? 'bg-secondary'
@@ -904,14 +907,14 @@ function renderComparisonChart(data, metric) {
                 },
                 y: {
                     title: { display: true, text: metricName },
-                    ticks: { callback: v => formatNumber(v) }
+                    ticks: { callback: v => formatMetricValue(metric, v) }
                 }
             },
             plugins: {
                 legend: { display: true, position: 'top' },
                 tooltip: {
                     callbacks: {
-                        label: ctx => `${ctx.dataset.label}: ${formatNumber(ctx.parsed.y)}`
+                        label: ctx => `${ctx.dataset.label}: ${formatMetricValue(metric, ctx.parsed.y)}`
                     }
                 }
             }

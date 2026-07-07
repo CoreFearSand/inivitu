@@ -31,6 +31,8 @@ _METRIC_DEFS = [
     ('culture_amount', 'Cultures',           '#e879f9'),
 ]
 
+_PERCENT_METRICS = frozenset({'literacy'})
+
 _IG_COLORS = [
     '#ef4444', '#f97316', '#eab308', '#22c55e',
     '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899',
@@ -56,6 +58,16 @@ def _fmt(v) -> str:
     if abs(v) >= 1_000:
         return f'{v / 1e3:.1f}k'
     return f'{v:.1f}'
+
+
+def _fmt_pct(v) -> str:
+    """Format a 0-1 fraction as a whole-number percentage, e.g. 0.129 → '13%'."""
+    if v is None:
+        return '—'
+    try:
+        return f'{round(float(v) * 100)}%'
+    except (TypeError, ValueError):
+        return '—'
 
 
 def _embed_flag(tag: str, url: str) -> str:
@@ -91,6 +103,7 @@ def _svg_chart(
     title: str = '',
     w: int = 700,
     h: int = 280,
+    y_label_fn=None,
 ) -> str:
     """Return a standalone SVG line-chart string.
 
@@ -152,6 +165,7 @@ def _svg_chart(
             f'font-size="11" font-weight="600">{_esc(title)}</text>'
         )
 
+    _ylbl = y_label_fn if y_label_fn is not None else _fmt
     N_GRID = 5
     for i in range(N_GRID + 1):
         v  = y_min + i / N_GRID * y_range
@@ -163,7 +177,7 @@ def _svg_chart(
         )
         buf.append(
             f'<text x="{PAD_L - 4}" y="{yv + 4:.1f}" text-anchor="end" '
-            f'fill="#78909c" font-size="9.5">{_fmt(v)}</text>'
+            f'fill="#78909c" font-size="9.5">{_ylbl(v)}</text>'
         )
 
     total   = len(all_dates)
@@ -294,11 +308,11 @@ def generate_country_html(
 
     for metric_key, metric_label, color in _METRIC_DEFS:
         if is_global:
-            rows     = data_access.get_global_metrics_history(metric_key, playthrough_id, 200)
+            rows     = data_access.get_global_metrics_history(metric_key, playthrough_id, 9999)
             data_pts = [{'date': r['in_game_date'], 'value': r['amount']} for r in rows]
         else:
             rows     = data_access.get_country_metrics_for_playthrough(
-                tag, metric_key, playthrough_id, 200
+                tag, metric_key, playthrough_id, 9999
             )
             data_pts = [
                 {'date': r.get('in_game_date') or r.get('recorded_at'), 'value': r['amount']}
@@ -306,16 +320,30 @@ def generate_country_html(
             ]
 
         latest_val = data_pts[-1]['value'] if data_pts else None
+
+        is_pct = metric_key in _PERCENT_METRICS
+        if is_pct:
+            data_pts = [
+                {'date': p['date'], 'value': (p['value'] * 100) if p['value'] is not None else None}
+                for p in data_pts
+            ]
+            latest_val_scaled = (latest_val * 100) if latest_val is not None else None
+            card_value = f'{round(latest_val_scaled)}%' if latest_val_scaled is not None else '—'
+        else:
+            card_value = _fmt(latest_val)
+
         metric_cards_html += (
             f'<div class="mcard">'
             f'<div class="mcard-label">{_esc(metric_label)}</div>'
-            f'<div class="mcard-value">{_fmt(latest_val)}</div>'
+            f'<div class="mcard-value">{card_value}</div>'
             f'</div>\n'
         )
 
+        svg_kwargs = {'y_label_fn': lambda v: f'{round(v)}%'} if is_pct else {}
         svg          = _svg_chart(
             [{'label': metric_label, 'color': color, 'data': data_pts}],
             title=metric_label,
+            **svg_kwargs,
         )
         charts_html += f'<div class="chart-cell">{svg}</div>\n'
 
@@ -333,14 +361,16 @@ def generate_country_html(
         lbl = ig_type.replace('ig_', '').replace('_', ' ').title()
         ig_clout_series.append({
             'label': lbl, 'color': clr,
-            'data': [{'date': p['date'], 'value': p.get('clout')} for p in pts],
+            # Scale clout (0-1) to whole-percentage values for the chart
+            'data': [{'date': p['date'], 'value': (p['clout'] * 100) if p.get('clout') is not None else None} for p in pts],
         })
         ig_approval_series.append({
             'label': lbl, 'color': clr,
             'data': [{'date': p['date'], 'value': p.get('approval')} for p in pts],
         })
 
-    ig_clout_svg    = _svg_chart(ig_clout_series,    title='IG Clout Over Time',    w=1000, h=300) if ig_clout_series    else ''
+    _pct_lbl = lambda v: f'{round(v)}%'
+    ig_clout_svg    = _svg_chart(ig_clout_series,    title='IG Clout Over Time',    w=1000, h=300, y_label_fn=_pct_lbl) if ig_clout_series    else ''
     ig_approval_svg = _svg_chart(ig_approval_series, title='IG Approval Over Time', w=1000, h=300) if ig_approval_series else ''
 
     ig_table_rows = ''
@@ -352,8 +382,8 @@ def generate_country_html(
         ig_table_rows += (
             f'<tr>'
             f'<td>{_esc(ig.get("ig_type", ""))}</td>'
-            f'<td>{_fmt(ig.get("clout"))}%</td>'
-            f'<td>{_fmt(ig.get("approval"))}%</td>'
+            f'<td>{_fmt_pct(ig.get("clout"))}</td>'
+            f'<td>{round(ig.get("approval") or 0):+d}%</td>'
             f'<td>{_fmt(ig.get("membership"))}</td>'
             f'<td>{gov_badge}</td>'
             f'</tr>\n'
@@ -397,7 +427,7 @@ def generate_country_html(
     wars = data_access.get_war_statistics(
         country_tag=None if is_global else tag,
         playthrough_id=playthrough_id,
-        limit=100,
+        limit=9999,
     )
     war_rows_html = ''
     for w in wars:
