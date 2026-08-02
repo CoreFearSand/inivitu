@@ -86,9 +86,10 @@ The `config.json` file contains all application settings:
 - **Social**: Population, literacy, average standard of living
 - **Political**: Prestige, culture diversity
 - **Military**: Military workforce size
-- **Wars**: Wars and war related data
+- **Wars**: Wars and war related data <- currently broken
 - **IG**: tracks both clout and Aproval
 - **Global**: depending on the stat stracks a SUM or AVG of the stat
+- **Goods**: Tracks good produced and market import/export
 
 ## Troubleshooting
 
@@ -125,75 +126,103 @@ python victoria3_tracker.py --log-level DEBUG     # Verbose logs in logs/
 
 ## Project Structure
 
+What a fresh clone of the repository contains (generated and personal files are
+listed separately below):
+
 ```
 inivitu/
 │
-├── victoria3_tracker.py          # CLI launcher with dependency checking
-├── install.py                    # Setup/installation wizard
-├── config.json                   # App configuration (paths, ports, settings)
-├── requirements.txt              # Runtime Python dependencies
-├── requirements-dev.txt          # Dev/test dependencies (pytest, black, flake8)
-├── start_tracker.bat             # Windows batch launcher
-├── start_tracker.ps1             # PowerShell launcher
-├── rakaly.exe                    # Save-file parser (download separately)
+├── victoria3_tracker.py              # CLI launcher (dependency checks, arg parsing)
+├── install.py                        # Setup wizard: writes config.json + creates an empty DB
+├── requirements.txt                  # Runtime dependencies
+├── requirements-dev.txt              # Dev/test dependencies (pytest, black, flake8)
+├── start_tracker.bat                 # Windows batch launcher
+├── start_tracker.ps1                 # PowerShell launcher
+├── README.md
+├── .gitignore
 │
-├── victoria3_tracker/            # Core Python package
-│   ├── main.py                   # App orchestrator (starts all components)
-│   ├── config.py                 # Config management & validation
-│   ├── logging_config.py         # Logging setup
-│   │
-│   ├── database/
-│   │   ├── victoria3_data.db     # Live SQLite database (git-ignored)
-│   │   ├── schema.py             # Table definitions (Saves, Countries, Wars, Metrics…)
-│   │   ├── manager.py            # Connection lifecycle, execute_query, transactions
-│   │   ├── data_access.py        # CRUD / query layer (DataAccessLayer)
-│   │   └── backup/               # Database backups (git-ignored)
-│   │
-│   ├── parser/
-│   │   ├── save_parser.py        # Runs rakaly.exe, parses JSON output
-│   │   ├── data_processor.py     # Validates & coordinates processing pipeline
-│   │   ├── metrics_extractor.py  # Extracts economic/social/political metrics
-│   │   └── war_extractor.py      # Extracts war & battle data
-│   │
-│   ├── monitor/
-│   │   ├── file_monitor.py       # Watches save directory for new .v3 files
-│   │   └── file_processor.py     # Async processing queue with validation
-│   │
-│   ├── api/
-│   │   ├── app.py                # Flask app, CORS, request logging, export endpoints
-│   │   ├── country_endpoints.py  # REST: /api/countries/*
-│   │   ├── war_endpoints.py      # REST: /api/wars/*, /api/battles/*
-│   │   ├── advanced_endpoints.py # REST: analytics & comparisons
-│   │   └── websocket_handler.py  # Real-time updates via Flask-SocketIO
-│   │
-│   └── web/
-│       ├── server.py             # Flask web server (serves pages + mounts API)
-│       ├── templates/
-│       │   ├── base.html         # Shared layout (nav, head, scripts)
-│       │   ├── dashboard.html    # Main overview page
-│       │   ├── countries.html    # Countries list
-│       │   ├── country_detail.html # Single country stats & charts
-│       │   ├── wars.html         # Wars list, timeline, battles
-│       │   ├── rankings.html     # Country metric rankings
-│       │   ├── saves.html        # Processed saves history
-│       │   ├── config.html       # Config editor UI
-│       │   └── error.html        # Error page
-│       └── static/
-│           ├── country_names.csv # Country tag → readable name mapping
-│           ├── war_adjectives.csv# Country tag → adjective for war naming
-│           ├── css/dashboard.css # Stylesheet
-│           └── js/
-│               ├── api.js        # Shared API calls & helpers (generateWarName etc.)
-│               ├── dashboard.js  # Dashboard page logic & charts
-│               ├── countries.js  # Countries page logic
-│               ├── wars.js       # Wars page logic & filters
-│               ├── export.js     # Client-side export triggers
-│               └── config.js     # Config page logic
+├── tests/                            # pytest suite
+│   ├── test_country_bugs_exploration.py
+│   └── test_country_preservation.py
 │
-└── tests/
-    ├── test_country_preservation.py
-    └── test_country_bugs_exploration.py
+└── victoria3_tracker/                # Core Python package
+    ├── main.py                       # App orchestrator (monitor + web + processing)
+    ├── config.py                     # Config loading & validation (ConfigManager)
+    ├── logging_config.py             # Logging setup
+    ├── user_law_mods.json            # Optional user-defined law overrides
+    │
+    ├── database/
+    │   ├── schema.py                 # Tables, views & idempotent migrations (SchemaMigrations ledger)
+    │   ├── manager.py                # Connections, transactions, execute_query / execute_many
+    │   └── data_access.py            # Insert & query layer (DataAccessLayer)
+    │
+    ├── parser/
+    │   ├── save_parser.py            # Runs rakaly.exe, returns parsed JSON
+    │   ├── data_processor.py         # Orchestrates parse → extract → store
+    │   ├── metrics_extractor.py      # GDP / prestige / population / … + game power rank
+    │   ├── war_extractor.py          # Wars, participants, battles
+    │   ├── economic_extractor.py     # GDP-by-good, trade, prices, per-state production
+    │   ├── interest_group_extractor.py # IG clout, political power, member population, rank
+    │   ├── law_extractor.py          # Active-law changes over time
+    │   ├── law_definitions.py        # Law → group / label / colour / category metadata
+    │   └── utils.py                  # Shared helpers (navigate_path, rank map, safe casts)
+    │
+    ├── monitor/
+    │   ├── file_monitor.py           # Watches the save directory for new .v3 files
+    │   └── file_processor.py         # Async processing queue with validation
+    │
+    ├── api/
+    │   ├── app.py                    # Flask API app, CORS, request logging
+    │   ├── country_endpoints.py      # /api/countries/*  (incl. D99 global aggregate + IGs)
+    │   ├── war_endpoints.py          # /api/wars/*, /api/battles/*
+    │   ├── economic_endpoints.py     # /api/economics/*  (GDP, market, trade timelines)
+    │   ├── advanced_endpoints.py     # /api/compare/*, trends, analytics
+    │   ├── export_html.py            # Self-contained per-country HTML export
+    │   ├── flag_utils.py             # Country tag → flag URL
+    │   ├── utils.py                  # Endpoint helpers (tag validation, …)
+    │   └── websocket_handler.py      # Real-time updates via Flask-SocketIO
+    │
+    └── web/
+        ├── server.py                 # Flask web server (serves pages + mounts the API)
+        ├── templates/
+        │   ├── base.html             # Shared layout (nav, head, scripts)
+        │   ├── dashboard.html        # Overview / landing
+        │   ├── countries.html        # Country list
+        │   ├── country_detail.html   # Per-country: metrics, economy/market, IGs, laws, wars
+        │   ├── wars.html             # Wars list, timeline, battles
+        │   ├── rankings.html         # Metric rankings
+        │   ├── saves.html            # Processed-saves history
+        │   ├── config.html           # Config editor
+        │   └── error.html            # Error page
+        └── static/
+            ├── country_names.csv     # Tag → readable country name
+            ├── war_adjectives.csv    # Tag → adjective (war-name generation)
+            ├── css/dashboard.css
+            ├── image/                # UI icons (diskette, refresh)
+            └── js/
+                ├── api.js            # Shared API calls & helpers
+                ├── dashboard.js      # Dashboard logic & charts
+                ├── countries.js      # Country pages (metrics, market, IGs, compare)
+                ├── wars.js           # Wars page logic & filters
+                ├── law_definitions.js # Client-side law metadata
+                ├── export.js         # Client-side export triggers
+                └── config.js         # Config page logic
 ```
+
+**Created locally, not committed** (see `.gitignore`) — you provide/generate these:
+
+```
+rakaly.exe                            # download separately (see Prerequisites)
+config.json                           # written by install.py on first setup
+victoria3_tracker/database/*.db       # SQLite database — created on first run
+logs/                                 # runtime logs
+__pycache__/  .venv/  .vscode/  .kiro/
+```
+
+> **Before publishing:** `config.json` stores your personal save-game path, and
+> `backups/`, `victoria3_tracker/config.json` and `.claude/settings.local.json`
+> are local artifacts. They are currently **not** in `.gitignore` — add them
+> before pushing if you don't want them in the public repo.
 
 ## Process
 
@@ -202,7 +231,7 @@ inivitu/
     → file_monitor.py sees it
     → file_processor.py validates & queues it
     → save_parser.py runs rakaly.exe → JSON
-    → metrics_extractor.py + war_extractor.py pull data
+    → extractors pull data: metrics · wars · economics · interest groups · laws
     → data_processor.py writes to SQLite via manager.py
     → websocket_handler.py broadcasts update to browser
     → api/*.py serves data to the web dashboard

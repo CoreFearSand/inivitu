@@ -11,6 +11,7 @@ LAW_GROUPS: Dict[str, Dict[str, Any]] = {
             'law_theocracy': 'Theocracy',
             'law_council_republic': 'Council Republic',
             'law_corporate_state': 'Corporate State',
+            'law_social_monarchy': 'Social Monarchy',
             'law_chiefdom': 'Chiefdom',
         },
     },
@@ -31,7 +32,6 @@ LAW_GROUPS: Dict[str, Dict[str, Any]] = {
             'law_neo_absolutism': 'Neo-Absolutism',
             'law_organic_regulation': 'Organic Regulation',
             'law_bakufu': 'Bakufu',
-            'law_social_monarchy': 'Social Monarchy',
         },
     },
     'citizenship': {
@@ -92,7 +92,6 @@ LAW_GROUPS: Dict[str, Dict[str, Any]] = {
         'laws': {
             'law_merchant_navy': 'Merchant Navy',
             'law_professional_navy': 'Professional Navy',
-
             'law_diplomatic_navy': 'Diplomatic Navy',
             'law_jeune_ecole': 'Jeune École',
         },

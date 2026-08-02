@@ -22,7 +22,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
-from .utils import navigate_path, safe_float, safe_int
+from .utils import navigate_path, safe_float, safe_int, build_country_rank_map
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,12 @@ class InterestGroupData:
     """Container for a single interest group record."""
     country_tag: str          # 3-letter country tag
     ig_type: str              # e.g. 'ig_industrialists'
-    clout: float = 0.0        # political clout 0-100
+    clout: float = 0.0        # political clout 0-1 (share of country political power)
     approval: float = 0.0     # approval rating -100 to 100
-    membership: int = 0       # number of pops in this IG
+    membership: int = 0       # number of pop-GROUPS referencing this IG (legacy 'pop units')
+    political_power: float = 0.0   # absolute political power (IG.political_strength)
+    population: float = 0.0        # member population: Σ pop_size × IG support fraction
+    country_rank: str = ''         # owning country's game power rank (great_power, …)
     in_government: bool = False
 
 
@@ -95,6 +98,32 @@ class InterestGroupExtractor:
 
             logger.info(f"Extracting interest groups from {len(ig_db)} entries")
 
+            # Local index of each IG within its country. Pop support arrays refer
+            # to IGs by this per-country index (IGs sorted by global id).
+            country_ig_ids: Dict[str, List[int]] = {}
+            for ig_id, ig_data in ig_db.items():
+                if not isinstance(ig_data, dict):
+                    continue
+                cid = (ig_data.get('country') or ig_data.get('owner')
+                       or ig_data.get('country_id') or ig_data.get('nation'))
+                if cid is None:
+                    continue
+                try:
+                    country_ig_ids.setdefault(str(cid), []).append(int(ig_id))
+                except (TypeError, ValueError):
+                    continue
+            ig_local_index: Dict[int, int] = {}
+            for cid, ids in country_ig_ids.items():
+                ids.sort()
+                for i, gid in enumerate(ids):
+                    ig_local_index[gid] = i
+
+            # Member population per (country_id, local IG index).
+            population_map = self._compute_ig_population(parsed_data)
+
+            # Owning country's authoritative game power rank.
+            rank_by_cid = build_country_rank_map(parsed_data)
+
             for ig_id, ig_data in ig_db.items():
                 try:
                     self.extraction_stats['igs_processed'] += 1
@@ -142,12 +171,30 @@ class InterestGroupExtractor:
                     # in_government is only present in the dict when True
                     in_gov = bool(ig_data.get('in_government', False))
 
+                    # Absolute political power of the IG.
+                    political_power = safe_float(ig_data.get('political_strength', 0))
+
+                    # Member population via the pop-support-weighted sum.
+                    try:
+                        local_idx = ig_local_index.get(int(ig_id))
+                    except (TypeError, ValueError):
+                        local_idx = None
+                    population = (
+                        population_map.get((str(country_numeric_id), local_idx), 0.0)
+                        if local_idx is not None else 0.0
+                    )
+
+                    country_rank = rank_by_cid.get(str(country_numeric_id), '')
+
                     results.append(InterestGroupData(
                         country_tag=country_tag,
                         ig_type=ig_type,
                         clout=clout,
                         approval=approval,
                         membership=membership,
+                        political_power=political_power,
+                        population=population,
+                        country_rank=country_rank,
                         in_government=in_gov,
                     ))
                     self.extraction_stats['igs_extracted'] += 1
@@ -171,6 +218,55 @@ class InterestGroupExtractor:
     def get_extraction_stats(self) -> Dict[str, int]:
         """Return statistics from the most recent extraction run."""
         return self.extraction_stats.copy()
+
+    def _compute_ig_population(self, parsed_data: Dict[str, Any]) -> Dict[tuple, float]:
+        """Member population per (country_id_str, local_ig_index).
+
+        The in-game IG population is the politically-active membership, which
+        equals Σ over pops of (pop_size × the pop's support fraction for that IG).
+        Each pop's `interest_group_support_array` gives {local_ig_index: fraction}.
+        """
+        from collections import defaultdict
+
+        acc: Dict[tuple, float] = defaultdict(float)
+        try:
+            pops_db = navigate_path(parsed_data, ['pops', 'database']) or {}
+            states = navigate_path(parsed_data, ['states', 'database']) or {}
+
+            def _iter(db):
+                if isinstance(db, dict):
+                    return db.items()
+                if isinstance(db, list):
+                    return ((str(i), v) for i, v in enumerate(db) if v is not None)
+                return iter(())
+
+            state_country: Dict[str, str] = {}
+            for sid, sd in _iter(states):
+                if isinstance(sd, dict) and sd.get('country') is not None:
+                    state_country[str(sid)] = str(sd.get('country'))
+
+            for _pid, pd in _iter(pops_db):
+                if not isinstance(pd, dict):
+                    continue
+                cid = state_country.get(str(pd.get('location')))
+                if cid is None:
+                    continue
+                size = safe_float(pd.get('workforce', 0)) + safe_float(pd.get('dependents', 0))
+                if size <= 0:
+                    continue
+                igsd = pd.get('interest_group_support_data')
+                if not isinstance(igsd, dict):
+                    continue
+                arr = igsd.get('interest_group_support_array')
+                if not isinstance(arr, list):
+                    continue
+                for item in arr:
+                    if isinstance(item, dict):
+                        for k, v in item.items():
+                            acc[(cid, safe_int(k))] += size * safe_float(v)
+        except Exception as e:
+            logger.warning(f"InterestGroupExtractor: population computation failed: {e}")
+        return acc
 
     def _build_id_to_tag_map(self, parsed_data: Dict[str, Any]) -> Dict[str, str]:
         """Build a mapping from numeric country database-ID to 3-letter tag."""

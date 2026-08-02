@@ -136,13 +136,9 @@ class MetricsExtractor:
             
             logger.info(f"Metrics extraction complete: {len(country_metrics_list)} countries with data")
 
-            # Post-process: compute prestige_tier from relative prestige rankings.
-            # GP tier boundaries (Victoria 3 standard):
-            #   1-8  → Great Power (tier 1)
-            #   9-16 → Major Power  (tier 2)
-            #   17-32 → Regional Power (tier 3)
-            #   33+   → Minor Power (tier 4)
-            self._assign_prestige_tiers(country_metrics_list)
+            # Post-process: set prestige_tier from the game's OWN country rank
+            # (country_rankings), not a prestige-sort approximation.
+            self._assign_prestige_tiers(country_metrics_list, parsed_data)
 
         except Exception as e:
             logger.error(f"Error during metrics extraction: {e}")
@@ -150,28 +146,44 @@ class MetricsExtractor:
 
         return country_metrics_list
 
-    def _assign_prestige_tiers(self, country_metrics_list: List['CountryMetrics']) -> None:
-        """Compute and assign prestige_tier for each country based on relative rank.
+    def _assign_prestige_tiers(self, country_metrics_list: List['CountryMetrics'],
+                               parsed_data: Dict[str, Any]) -> None:
+        """Assign prestige_tier from the game's authoritative country rank.
+
+        Uses country_rankings (great_power/major_power/…) mapped to a numeric
+        tier via COUNTRY_RANK_TIER, rather than sorting by prestige. Countries
+        without a rank entry fall back to a prestige-sort so the metric is never
+        empty.
 
         Args:
             country_metrics_list: List of CountryMetrics objects (mutated in-place)
+            parsed_data: Top-level parsed save (for country_rankings)
         """
-        ranked = [
-            cm for cm in country_metrics_list
-            if cm.get_metric('prestige') is not None
-        ]
-        ranked.sort(key=lambda cm: cm.get_metric('prestige') or 0.0, reverse=True)
+        from .utils import build_country_rank_map, COUNTRY_RANK_TIER
 
-        for rank_idx, cm in enumerate(ranked, start=1):
-            if rank_idx <= 8:
-                tier = 1.0   # Great Power
-            elif rank_idx <= 16:
-                tier = 2.0   # Major Power
-            elif rank_idx <= 32:
-                tier = 3.0   # Regional Power
+        rank_by_cid = build_country_rank_map(parsed_data)
+        db = (parsed_data.get('country_manager') or {}).get('database') or {}
+        tag_rank: Dict[str, str] = {}
+        for cid, cdata in db.items():
+            if isinstance(cdata, dict):
+                tag = cdata.get('definition')
+                if isinstance(tag, str) and len(tag) == 3:
+                    rank = rank_by_cid.get(str(cid))
+                    if rank:
+                        tag_rank[tag] = rank
+
+        unranked = []
+        for cm in country_metrics_list:
+            rank = tag_rank.get(cm.country_tag)
+            if rank:
+                cm.metrics['prestige_tier'] = float(COUNTRY_RANK_TIER.get(rank, 4))
             else:
-                tier = 4.0   # Minor Power
-            cm.metrics['prestige_tier'] = tier
+                unranked.append(cm)
+
+        # Fallback for any country the ranking list omitted: prestige sort.
+        unranked.sort(key=lambda c: c.get_metric('prestige') or 0.0, reverse=True)
+        for idx, cm in enumerate(unranked, start=1):
+            cm.metrics['prestige_tier'] = 1.0 if idx <= 8 else 2.0 if idx <= 16 else 3.0 if idx <= 32 else 4.0
     
     def _extract_country_metrics(self, country_tag: str, country_data: Dict[str, Any]) -> Dict[str, Optional[float]]:
         """Extract metrics for a single country.

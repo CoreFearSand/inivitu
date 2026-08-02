@@ -31,6 +31,7 @@ _METRIC_DEFS = [
     ('culture_amount', 'Cultures',           '#e879f9'),
 ]
 
+# Metrics stored as 0-1 fractions; display is multiplied by 100 and shown as %.
 _PERCENT_METRICS = frozenset({'literacy'})
 
 _IG_COLORS = [
@@ -254,6 +255,269 @@ def _svg_chart(
     return ''.join(buf)
 
 
+# Good → economic-role category → colour (mirrors the web Market view).
+_GOOD_CATEGORY = {
+    'coal': 'mined', 'iron': 'mined', 'lead': 'mined', 'sulfur': 'mined', 'oil': 'mined', 'gold': 'mined',
+    'wood': 'harvested', 'hardwood': 'harvested', 'rubber': 'harvested', 'silk': 'harvested',
+    'dye': 'harvested', 'tobacco': 'harvested', 'opium': 'harvested',
+    'grain': 'food', 'fish': 'food', 'meat': 'food', 'fruit': 'food', 'tea': 'food', 'coffee': 'food', 'sugar': 'food',
+    'fabric': 'industrial', 'paper': 'industrial', 'glass': 'industrial', 'steel': 'industrial',
+    'tools': 'industrial', 'engines': 'industrial', 'explosives': 'industrial', 'fertilizer': 'industrial',
+    'groceries': 'consumer', 'clothes': 'consumer', 'furniture': 'consumer', 'liquor': 'consumer',
+    'wine': 'consumer', 'porcelain': 'consumer', 'luxury_clothes': 'consumer', 'luxury_furniture': 'consumer',
+    'fine_art': 'consumer', 'automobiles': 'consumer', 'telephones': 'consumer', 'radios': 'consumer',
+    'ammunition': 'military', 'small_arms': 'military', 'artillery': 'military', 'tanks': 'military',
+    'aeroplanes': 'military', 'manowars': 'military', 'ironclads': 'military',
+    'services': 'services', 'transportation': 'services', 'electricity': 'services',
+    'merchant_marine': 'services', 'clippers': 'services', 'steamers': 'services',
+}
+_CATEGORY_COLOR = {
+    'mined': '#8a5a2b', 'harvested': '#3f9e56', 'food': '#e0b52e', 'industrial': '#3b74b0',
+    'consumer': '#e07b3c', 'military': '#cf4038', 'services': '#8659b5',
+}
+_CATEGORY_LABEL = {
+    'mined': 'Mined', 'harvested': 'Harvested', 'food': 'Raw food', 'industrial': 'Industrial inputs',
+    'consumer': 'Consumer', 'military': 'Military', 'services': 'Services & transport',
+}
+_WEEKS_PER_YEAR = 365.25 / 7   # weekly GDP → annual, matching the web app
+
+
+def _pretty_good(good_name: str) -> str:
+    return str(good_name or '').replace('_', ' ').title()
+
+
+def _good_color(name: str) -> str:
+    return _CATEGORY_COLOR.get(_GOOD_CATEGORY.get(name, ''), '#8a929c')
+
+
+def _svg_txt(x, y, text, size, fill, weight) -> str:
+    return (
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="middle" dominant-baseline="middle" '
+        f'fill="{fill}" font-size="{size}" font-weight="{weight}" '
+        f'style="text-shadow:0 1px 2px rgba(0,0,0,.6)">{_esc(text)}</text>'
+    )
+
+
+def _squarify(items, w, h, total):
+    """Bruls squarified treemap → [(item, x, y, w, h)]. items sorted desc."""
+    rects = []
+    if not items or w <= 0 or h <= 0 or total <= 0:
+        return rects
+    scale = (w * h) / total
+    areas = [it['value'] * scale for it in items]
+    st = {'x': 0.0, 'y': 0.0, 'w': float(w), 'h': float(h)}
+    row, row_a = [], []
+
+    def worst(extra):
+        a = row_a + ([extra] if extra is not None else [])
+        if not a:
+            return float('inf')
+        side = min(st['w'], st['h'])
+        s = sum(a); mx = max(a); mn = min(a)
+        if s <= 0 or mn <= 0 or side <= 0:
+            return float('inf')
+        return max(side * side * mx / (s * s), s * s / (side * side * mn))
+
+    def layout_row():
+        s = sum(row_a)
+        if s <= 0:
+            row.clear(); row_a.clear(); return
+        if st['w'] >= st['h']:
+            strip = s / st['h']; cy = st['y']
+            for k in range(len(row)):
+                ih = row_a[k] / strip
+                rects.append((row[k], st['x'], cy, strip, ih)); cy += ih
+            st['x'] += strip; st['w'] -= strip
+        else:
+            strip = s / st['w']; cx = st['x']
+            for k in range(len(row)):
+                iw = row_a[k] / strip
+                rects.append((row[k], cx, st['y'], iw, strip)); cx += iw
+            st['y'] += strip; st['h'] -= strip
+        row.clear(); row_a.clear()
+
+    for i, ar in enumerate(areas):
+        if not row or worst(ar) <= worst(None):
+            row.append(items[i]); row_a.append(ar)
+        else:
+            layout_row(); row.append(items[i]); row_a.append(ar)
+    if row:
+        layout_row()
+    return rects
+
+
+def _treemap_svg(items, fmt, w=460, h=300) -> str:
+    """Static category-coloured treemap SVG. items: [{'name','value'}]."""
+    items = [{'name': i['name'], 'value': i['value']} for i in items if (i.get('value') or 0) > 0]
+    empty = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
+        f'style="width:100%;background:#0d1117;border-radius:6px;">'
+        f'<text x="{w // 2}" y="{h // 2}" text-anchor="middle" fill="#555" font-size="13">No data</text></svg>'
+    )
+    if not items:
+        return empty
+    items.sort(key=lambda i: i['value'], reverse=True)
+    total = sum(i['value'] for i in items)
+    rects = _squarify(items, w, h, total)
+    buf = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
+        f'style="width:100%;background:#0d1117;border-radius:6px;">'
+    ]
+    for it, bx, by, bw, bh in rects:
+        pct = it['value'] / total * 100
+        buf.append(
+            f'<rect x="{bx + 1:.1f}" y="{by + 1:.1f}" width="{max(0, bw - 2):.1f}" '
+            f'height="{max(0, bh - 2):.1f}" rx="2" fill="{_good_color(it["name"])}" '
+            f'stroke="rgba(0,0,0,.28)" stroke-width="1"/>'
+        )
+        if bw > 46 and bh > 24:
+            cx = bx + bw / 2
+            name = _pretty_good(it['name'])
+            lines = [name]
+            if len(name) > 12 and bw < 132 and ' ' in name:
+                parts = name.split(' '); mid = (len(parts) + 1) // 2
+                lines = [' '.join(parts[:mid]), ' '.join(parts[mid:])]
+            show_val = bh > 44
+            show_pct = bh > 60
+            lh = 13.0
+            n = len(lines) + (1 if show_val else 0) + (1 if show_pct else 0)
+            cy = by + bh / 2 - (n - 1) * lh / 2
+            for ln in lines:
+                buf.append(_svg_txt(cx, cy, ln, 11, '#fff', 700)); cy += lh
+            if show_val:
+                buf.append(_svg_txt(cx, cy, fmt(it['value']), 11, '#fff', 700)); cy += lh
+            if show_pct:
+                buf.append(_svg_txt(cx, cy, f'{pct:.0f}%', 9.5, 'rgba(255,255,255,.82)', 400))
+    buf.append('</svg>')
+    return ''.join(buf)
+
+
+def _cat_legend() -> str:
+    """Small colour key for the treemap categories."""
+    chips = ''
+    for key, color in _CATEGORY_COLOR.items():
+        chips += (
+            f'<span class="chip"><i style="background:{color}"></i>'
+            f'{_esc(_CATEGORY_LABEL[key])}</span>'
+        )
+    return f'<div class="cat-legend">{chips}</div>'
+
+
+def _market_charts(db, tag: str, is_global: bool, pt: str) -> str:
+    """Static Market section: Production / Exports / Imports, each a
+    'production-over-time' line chart (left) + a category-coloured treemap of
+    the latest save (right) - the same layout as the web Market tab, frozen."""
+    from collections import defaultdict
+
+    canon = (
+        "JOIN (SELECT in_game_date, MAX(saved_at) AS mx FROM Saves "
+        "WHERE playthrough_id=? GROUP BY in_game_date) can "
+        "ON can.in_game_date=s.in_game_date AND can.mx=s.saved_at"
+    )
+
+    # ---- production (annual £) ----
+    if is_global:
+        prows = db.execute_query(
+            f"SELECT s.in_game_date AS d, g.good_name AS gn, SUM(g.revenue) AS rev "
+            f"FROM GDPByGood g JOIN Saves s ON s.save_id=g.save_id {canon} "
+            f"WHERE s.playthrough_id=? GROUP BY s.in_game_date, g.good_name ORDER BY s.in_game_date ASC",
+            (pt, pt),
+        )
+    else:
+        prows = db.execute_query(
+            f"SELECT s.in_game_date AS d, g.good_name AS gn, SUM(g.revenue) AS rev "
+            f"FROM GDPByGood g JOIN Saves s ON s.save_id=g.save_id {canon} "
+            f"WHERE s.playthrough_id=? AND g.country_tag=? GROUP BY s.in_game_date, g.good_name ORDER BY s.in_game_date ASC",
+            (pt, pt, tag),
+        )
+    prod_dates, seen, prod = [], set(), defaultdict(dict)
+    for r in prows:
+        d = r['d']
+        if d not in seen:
+            seen.add(d); prod_dates.append(d)
+        prod[r['gn']][d] = (r['rev'] or 0) * _WEEKS_PER_YEAR
+    prod_latest = prod_dates[-1] if prod_dates else None
+
+    # ---- trade (units) ----
+    trade_sql = (
+        "SELECT s.in_game_date AS d, t.good_name AS gn, "
+        "SUM(CASE WHEN t.net_quantity>0 THEN t.net_quantity ELSE 0 END) AS eq, "
+        "SUM(CASE WHEN t.net_quantity<0 THEN ABS(t.net_quantity) ELSE 0 END) AS iq "
+        f"FROM TradeBalance t JOIN Saves s ON s.save_id=t.save_id {canon} "
+        "WHERE s.playthrough_id=? {extra} GROUP BY s.in_game_date, t.good_name ORDER BY s.in_game_date ASC"
+    )
+    if is_global:
+        trows = db.execute_query(trade_sql.format(extra=''), (pt, pt))
+    else:
+        trows = db.execute_query(trade_sql.format(extra='AND t.market_tag=?'), (pt, pt, tag))
+    t_dates, tseen, exp, imp = [], set(), defaultdict(dict), defaultdict(dict)
+    for r in trows:
+        d = r['d']
+        if d not in tseen:
+            tseen.add(d); t_dates.append(d)
+        if r['eq']:
+            exp[r['gn']][d] = r['eq']
+        if r['iq']:
+            imp[r['gn']][d] = r['iq']
+    t_latest = t_dates[-1] if t_dates else None
+
+    if not prod and not exp and not imp:
+        return ''
+
+    def series(by_good, dates, latest, topn=12):
+        top = sorted(by_good.items(), key=lambda kv: kv[1].get(latest, 0) or 0, reverse=True)[:topn]
+        return [
+            {'label': _pretty_good(gn), 'color': _good_color(gn),
+             'data': [{'date': d, 'value': vals.get(d)} for d in dates]}
+            for gn, vals in top
+        ]
+
+    def tree_items(by_good, latest):
+        return [
+            {'name': gn, 'value': vals.get(latest, 0) or 0}
+            for gn, vals in by_good.items() if (vals.get(latest, 0) or 0) > 0
+        ]
+
+    money = lambda v: '£' + _fmt(v)
+    money_axis = lambda v: '£' + _fmt(v)
+
+    def block(title, chart, tree):
+        return (
+            f'<h3 class="sub">{_esc(title)}</h3>'
+            f'<div class="mkt-row"><div class="mkt-chart">{chart}</div>'
+            f'<div class="mkt-tree">{tree}</div></div>'
+        )
+
+    label = 'World Trade' if is_global else 'Economy'
+    as_of = prod_latest or t_latest or '?'
+    out = [
+        f'<h2>Market -; {label} '
+        f'<span style="text-transform:none;letter-spacing:0;color:#3d444d;'
+        f'font-size:.75rem;font-weight:400">as of {_esc(as_of)}</span></h2>\n',
+        _cat_legend(),
+    ]
+    if prod:
+        out.append(block(
+            'Production (annual £)',
+            _svg_chart(series(prod, prod_dates, prod_latest), title='Production over time',
+                       w=560, h=280, y_label_fn=money_axis),
+            _treemap_svg(tree_items(prod, prod_latest), money),
+        ))
+    if exp:
+        out.append(block(
+            'Exports (units)',
+            _svg_chart(series(exp, t_dates, t_latest), title='Exports over time', w=560, h=280),
+            _treemap_svg(tree_items(exp, t_latest), _fmt),
+        ))
+    if imp:
+        out.append(block(
+            'Imports (units)',
+            _svg_chart(series(imp, t_dates, t_latest), title='Imports over time', w=560, h=280),
+            _treemap_svg(tree_items(imp, t_latest), _fmt),
+        ))
+    return ''.join(out)
+
+
 def generate_country_html(
     db_manager,
     data_access,
@@ -447,6 +711,8 @@ def generate_country_html(
             f'</tr>\n'
         )
 
+    market_section = _market_charts(db_manager, tag, is_global, playthrough_id)
+
     export_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
     pt_short  = playthrough_id[:8] if playthrough_id else '?'
 
@@ -503,6 +769,13 @@ h2{{font-size:1rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter
 .mcard-value{{font-size:1.35rem;font-weight:700;color:#4e9af1}}
 .chart-grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}}
 @media(max-width:680px){{.chart-grid{{grid-template-columns:1fr}}}}
+.mkt-row{{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;align-items:center;margin-bottom:18px}}
+@media(max-width:680px){{.mkt-row{{grid-template-columns:1fr}}}}
+.mkt-chart,.mkt-tree{{min-width:0}}
+h3.sub{{font-size:.86rem;font-weight:600;color:#c9d1d9;margin:16px 0 8px}}
+.cat-legend{{display:flex;flex-wrap:wrap;gap:8px 16px;margin:2px 0 6px}}
+.cat-legend .chip{{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;color:#8b949e}}
+.cat-legend .chip i{{width:11px;height:11px;border-radius:3px;display:inline-block}}
 .chart-cell,.chart-full{{overflow:hidden;border-radius:6px}}
 .chart-full{{margin-bottom:14px}}
 table{{width:100%;border-collapse:collapse;font-size:.87rem;background:#161b22;border-radius:8px;overflow:hidden;margin-bottom:16px}}
@@ -525,7 +798,7 @@ tr:hover td{{background:#1c2128}}
   <div style="flex-shrink:0">{flag_img}</div>
   <div>
     <h1>{_esc(country_name)}</h1>
-    <div class="header-sub">Victoria 3 · {_esc(start_date)} → {_esc(end_date)}</div>
+    <div class="header-sub">Victoria 3 · {_esc(start_date)} → {_esc(end_date)}</div>
     <div class="header-sub" style="font-size:.78rem;color:#3d444d;margin-top:2px">Playthrough: {_esc(pt_short)}&hellip;</div>
   </div>
 </div>
@@ -540,12 +813,13 @@ tr:hover td{{background:#1c2128}}
 {charts_html}
 </div>
 
+{market_section}
 {ig_section}
 {law_section}
 {war_section}
 
 <div class="footer">
-  Exported {_esc(export_ts)} &middot; Victoria 3 Game Tracker &middot; Fully offline &mdash; no server connection required
+  Exported {_esc(export_ts)} &middot; Victoria 3 Game Tracker &middot; Fully offline -; no server connection required
 </div>
 
 </body>

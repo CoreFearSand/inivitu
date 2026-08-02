@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────
-# Victoria 3 Game Tracker — .gitignore
+# Victoria 3 Game Tracker - .gitignore
 # ──────────────────────────────────────────────
 
 # ── Database files (live data, not tracked) ──
@@ -14,9 +14,9 @@ victoria3_tracker/database/backup/
 logs/
 *.log
 
-# ── Configuration (may contain personal paths) ──
-# Uncomment the line below if you don't want to track config.json
-# config.json
+# ── Configuration ──
+config.json
+user_law_mods.json
 
 # ── Python cache ──
 __pycache__/
@@ -54,7 +54,9 @@ desktop.ini
 .idea/
 *.sublime-project
 *.sublime-workspace
-.kiro/
 
 # ── rakaly binary (users download their own) ──
 rakaly.exe
+
+# ── Test data ──
+test/

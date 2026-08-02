@@ -160,6 +160,40 @@ def create_directories():
     
     return True
 
+def initialize_database():
+    """Create a fresh, empty database (schema + migration ledger, no game data).
+
+    The live *.db is gitignored, so a cloned repo ships WITHOUT a database and
+    with an empty migration ledger. This builds an empty database on install so
+    the app is ready to run immediately. An existing database is left untouched
+    (its migrations are applied automatically on next app start).
+    """
+    print("\nInitializing database...")
+
+    try:
+        from victoria3_tracker.config import ConfigManager
+        from victoria3_tracker.database.manager import DatabaseManager
+
+        db_path = ConfigManager().get_database_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if db_path.exists():
+            print(f"✓ Database already exists (left as-is): {db_path}")
+            return True
+
+        # Constructing the manager runs create_schema + migrate_schema, so the
+        # new DB has the full current schema and a fully-populated ledger, but
+        # no game data.
+        DatabaseManager(db_path)
+        print(f"✓ Empty database created: {db_path}")
+        return True
+
+    except Exception as e:
+        print(f"✗ Failed to initialize database: {e}")
+        print("  (the app will create it automatically on first run)")
+        return False
+
+
 def test_installation():
     """Test the installation by importing the main module."""
     print("\nTesting installation...")
@@ -387,7 +421,11 @@ def main():
     if not create_directories():
         print("✗ Failed to create required directories")
         sys.exit(1)
-    
+
+    # Create an empty database (schema + migration ledger; no game data).
+    # Non-fatal: the app also creates it on first run if this is skipped.
+    initialize_database()
+
     # Test installation
     print("\nTesting installation...")
     if not test_installation():

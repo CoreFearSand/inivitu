@@ -16,6 +16,7 @@ const LAW_GROUPS = {
             law_theocracy: 'Theocracy',
             law_council_republic: 'Council Republic',
             law_corporate_state: 'Corporate State',
+            law_social_monarchy: 'Social Monarchy',
             law_chiefdom: 'Chiefdom',
         },
     },
@@ -32,10 +33,10 @@ const LAW_GROUPS = {
             law_single_party_state: 'Single-Party State',
             law_anarchy: 'Anarchy',
             law_elder_council: 'Elder Council',
+
             law_neo_absolutism: 'Neo-Absolutism',
             law_organic_regulation: 'Organic Regulation',
             law_bakufu: 'Bakufu',
-            law_social_monarchy: 'Social Monarchy',
         },
     },
     citizenship: {
@@ -65,6 +66,7 @@ const LAW_GROUPS = {
             law_freedom_of_conscience: 'Freedom of Conscience',
             law_total_separation: 'Total Separation',
             law_state_atheism: 'State Atheism',
+
             law_people_of_the_book: 'People of the Book',
             law_millet_system: 'Millet System',
         },
@@ -75,6 +77,7 @@ const LAW_GROUPS = {
             law_hereditary_bureaucrats: 'Hereditary Bureaucrats',
             law_appointed_bureaucrats: 'Appointed Bureaucrats',
             law_elected_bureaucrats: 'Elected Bureaucrats',
+
             law_crownland_diets: 'Crownland Diets',
         },
     },
@@ -85,6 +88,7 @@ const LAW_GROUPS = {
             law_professional_army: 'Professional Army',
             law_national_militia: 'National Militia',
             law_mass_conscription: 'Mass Conscription',
+
             law_warrior_caste: 'Warrior Caste',
         },
     },
@@ -127,6 +131,7 @@ const LAW_GROUPS = {
             law_protectionism: 'Protectionism',
             law_free_trade: 'Free Trade',
             law_isolationism: 'Isolationism',
+
             law_canton_system: 'Canton System',
         },
     },
@@ -157,6 +162,7 @@ const LAW_GROUPS = {
             law_commercialized_agriculture: 'Commercialized Agriculture',
             law_homesteading: 'Homesteading',
             law_collectivized_agriculture: 'Collectivized Agriculture',
+
             law_manorialism: 'Manorialism',
             law_latifundias: 'Latifundias',
             law_expanded_latifundias: 'Expanded Latifundias',
@@ -179,6 +185,7 @@ const LAW_GROUPS = {
             law_local_police: 'Local Police Force',
             law_dedicated_police: 'Dedicated Police Force',
             law_militarized_police: 'Militarized Police Force',
+
             law_shinsengumi: 'Shinsengumi',
         },
     },
@@ -189,6 +196,7 @@ const LAW_GROUPS = {
             law_religious_schools: 'Religious Schools',
             law_private_schools: 'Private Schools',
             law_public_schools: 'Public Schools',
+
             law_terakoya: 'Terakoya',
         },
     },
@@ -234,6 +242,7 @@ const LAW_GROUPS = {
             law_women_own_property: 'Propertied Women',
             law_women_in_the_workplace: 'Women in the Workplace',
             law_womens_suffrage: "Women's Suffrage",
+
             law_women_in_the_fields: 'Women in the Fields',
         },
     },
@@ -244,6 +253,7 @@ const LAW_GROUPS = {
             law_poor_laws: 'Poor Laws',
             law_wage_subsidies: 'Wage Subsidies',
             law_old_age_pension: 'Old Age Pension',
+            
             law_chiefs_distribute_aid: 'Sef Paternalism',
         },
     },

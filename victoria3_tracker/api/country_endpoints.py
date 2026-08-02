@@ -120,10 +120,15 @@ class CountryEndpoints:
             try:
                 country_tag = validate_tag(country_tag)
                 country_tag = country_tag.upper()
-                if country_tag == 'D99':
-                    return jsonify({'country_tag': 'D99', 'interest_groups': []})
                 playthrough_id = request.args.get('playthrough_id')
                 save_id = request.args.get('save_id')
+
+                if country_tag == 'D99':
+                    ig_list = self.data_access.get_global_interest_groups(
+                        playthrough_id=playthrough_id,
+                        save_id=save_id,
+                    )
+                    return jsonify({'country_tag': 'D99', 'interest_groups': ig_list})
 
                 ig_list = self.data_access.get_interest_groups_for_country(
                     country_tag=country_tag,

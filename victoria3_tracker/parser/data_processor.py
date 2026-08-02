@@ -16,6 +16,7 @@ from .metrics_extractor import MetricsExtractor, CountryMetrics
 from .war_extractor import WarExtractor, WarData
 from .interest_group_extractor import InterestGroupExtractor
 from .law_extractor import LawExtractor
+from .economic_extractor import EconomicExtractor
 from ..database import DatabaseManager, DataAccessLayer
 from ..config import ConfigManager
 
@@ -39,6 +40,7 @@ class DataProcessor:
         self.war_extractor = WarExtractor()
         self.ig_extractor = InterestGroupExtractor()
         self.law_extractor = LawExtractor()
+        self.economic_extractor = EconomicExtractor()
 
         # Processing statistics
         self.processing_stats = {
@@ -50,6 +52,7 @@ class DataProcessor:
             'wars_stored': 0,
             'interest_groups_stored': 0,
             'laws_stored': 0,
+            'economic_rows_stored': 0,
             'last_processed_file': None,
             'last_processing_time': None
         }
@@ -190,18 +193,34 @@ class DataProcessor:
             )
             logger.debug(f"Stored {laws_inserted} law changes")
 
+            logger.debug("Step 5: Extracting economic data (GDP by good, trade, ownership)")
+            try:
+                gdp_by_good, trade_balance, gdp_ownership, state_production, good_prices = (
+                    self.economic_extractor.extract_all(parsed_data)
+                )
+                econ_counts = self.data_access.insert_economic_data(
+                    gdp_by_good, trade_balance, gdp_ownership, save_id,
+                    state_production, good_prices
+                )
+                econ_total = sum(econ_counts.values())
+                logger.debug(f"Stored {econ_total} economic rows")
+            except Exception as e:
+                logger.warning(f"Economic extraction failed (non-fatal): {e}", exc_info=True)
+                econ_total = 0
+
             self.data_access.log_processing_result(
                 filename=file_path.name,
                 status='success',
                 save_id=save_id,
                 processing_time_ms=processing_time_ms
             )
-            
+
             self.processing_stats['countries_processed'] += len(country_metrics_list)
             self.processing_stats['metrics_stored'] += metrics_inserted
             self.processing_stats['wars_stored'] += wars_inserted
             self.processing_stats['interest_groups_stored'] += ig_inserted
             self.processing_stats['laws_stored'] += laws_inserted
+            self.processing_stats['economic_rows_stored'] += econ_total
             
             return True
             

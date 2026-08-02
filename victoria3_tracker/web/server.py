@@ -113,7 +113,7 @@ class WebServer:
         Replaces the old Blueprint-copy approach.  That approach passed Flask's
         auto-added OPTIONS/HEAD methods back into add_url_rule, which silently
         dropped DELETE (and sometimes POST) routes in several Flask/Werkzeug
-        version combinations — causing the "Delete button does nothing" bug.
+        version combinations - causing the "Delete button does nothing" bug.
 
         Direct add_url_rule with an explicit, filtered method set is reliable.
         """
@@ -331,7 +331,7 @@ class WebServer:
     
     def _get_countries_data(self):
         """Get countries data for web pages."""
-        # No try/except here — callers own the error boundary so failures are
+        # No try/except here - callers own the error boundary so failures are
         # visible in the page (via the route-level handler) rather than silently
         # returning empty data.
         results = self.db_manager.execute_query("""
@@ -405,7 +405,7 @@ class WebServer:
                     'latest_metrics': latest_metrics,
                 }
 
-            # Get country info first — return None only if country doesn't exist
+            # Get country info first - return None only if country doesn't exist
             country_info = self.db_manager.execute_query("""
                 SELECT DISTINCT c.name, c.is_player_country, s.in_game_date
                 FROM Countries c
@@ -531,14 +531,16 @@ class WebServer:
                     self.app,
                     host=host,
                     port=port,
-                    debug=debug
+                    debug=debug,
+                    allow_unsafe_werkzeug=True
                 )
             else:
                 self.app.run(
                     host=host,
                     port=port,
                     debug=debug,
-                    threaded=True
+                    threaded=True,
+                    allow_unsafe_werkzeug=True
                 )
         except Exception as e:
             logger.error(f"Failed to start web server: {e}")

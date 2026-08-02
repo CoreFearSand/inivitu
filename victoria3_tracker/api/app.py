@@ -21,6 +21,7 @@ from ..config import ConfigManager
 from .advanced_endpoints import AdvancedEndpoints
 from .war_endpoints import WarEndpoints
 from .country_endpoints import CountryEndpoints
+from .economic_endpoints import EconomicEndpoints
 # WebSocket handler removed
 from .flag_utils import flag_url as _flag_url, flag_url_alt as _flag_url_alt
 
@@ -58,6 +59,7 @@ class Victoria3API:
         self.advanced_endpoints = AdvancedEndpoints(self)
         self.war_endpoints = WarEndpoints(self)
         self.country_endpoints = CountryEndpoints(self)
+        self.economic_endpoints = EconomicEndpoints(self)
 
         # WebSocket handler disabled
         self.websocket_handler = None
@@ -264,6 +266,8 @@ class Victoria3API:
                 # D99 = virtual Global country: aggregate across all real countries
                 if country_tag == 'D99':
                     if metric_name:
+                        # History-only path: skip the 11+ aggregate queries for latest
+                        # metrics since the caller only needs the time-series.
                         history_rows = self.data_access.get_global_metrics_history(
                             metric_name, playthrough_id, limit
                         )

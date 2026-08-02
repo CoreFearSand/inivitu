@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS Countries (
     save_id TEXT NOT NULL,
     name TEXT NOT NULL,
     is_player_country BOOLEAN DEFAULT FALSE,
+    country_rank TEXT DEFAULT '',   -- game power rank (great_power, minor_power, …)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
     UNIQUE(country_tag, save_id)
@@ -135,7 +136,10 @@ CREATE TABLE IF NOT EXISTS InterestGroups (
     ig_type TEXT NOT NULL,           -- e.g. 'ig_industrialists'
     clout REAL DEFAULT 0,            -- political clout 0-100
     approval REAL DEFAULT 0,         -- approval -100 to 100
-    membership INTEGER DEFAULT 0,    -- number of pops in this IG
+    membership INTEGER DEFAULT 0,    -- number of pop-groups in this IG (legacy 'pop units')
+    political_power REAL DEFAULT 0,  -- IG political_strength (absolute political power)
+    population REAL DEFAULT 0,       -- member population: Σ pop_size × IG support fraction
+    country_rank TEXT DEFAULT '',    -- owning country power rank (great_power, minor_power, …)
     in_government BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
@@ -196,6 +200,41 @@ CREATE TABLE IF NOT EXISTS TerritoryBorders (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(province_id)
 );
+
+CREATE TABLE IF NOT EXISTS GDPOwnership (
+    ownership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    save_id TEXT NOT NULL,
+    country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+    investor_tag TEXT NOT NULL CHECK (length(investor_tag) = 3),
+    building_group TEXT NOT NULL,
+    gdp_owned DECIMAL(20,4) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+    UNIQUE(save_id, country_tag, investor_tag, building_group)
+);
+
+CREATE TABLE IF NOT EXISTS GDPByGood (
+    gdp_good_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    save_id TEXT NOT NULL,
+    country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+    good_name TEXT NOT NULL,
+    building_group TEXT NOT NULL,
+    revenue DECIMAL(20,4) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+    UNIQUE(save_id, country_tag, good_name)
+);
+
+CREATE TABLE IF NOT EXISTS TradeBalance (
+    trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    save_id TEXT NOT NULL,
+    market_tag TEXT NOT NULL CHECK (length(market_tag) = 3),
+    good_name TEXT NOT NULL,
+    net_quantity DECIMAL(15,4) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+    UNIQUE(save_id, market_tag, good_name)
+);
 """
 
 INDEXES_SQL = """
@@ -222,6 +261,15 @@ CREATE INDEX IF NOT EXISTS idx_country_laws_activation_date ON CountryLaws(activ
 CREATE INDEX IF NOT EXISTS idx_territories_save_id ON Territories(save_id);
 CREATE INDEX IF NOT EXISTS idx_territories_country_id ON Territories(country_id);
 CREATE INDEX IF NOT EXISTS idx_territories_province_id ON Territories(province_id);
+
+-- v1.7.0 economic detail tables
+CREATE INDEX IF NOT EXISTS idx_gdp_ownership_save_id ON GDPOwnership(save_id);
+CREATE INDEX IF NOT EXISTS idx_gdp_ownership_country ON GDPOwnership(save_id, country_tag);
+CREATE INDEX IF NOT EXISTS idx_gdp_ownership_investor ON GDPOwnership(save_id, investor_tag);
+CREATE INDEX IF NOT EXISTS idx_gdp_by_good_save_id ON GDPByGood(save_id);
+CREATE INDEX IF NOT EXISTS idx_gdp_by_good_country ON GDPByGood(save_id, country_tag);
+CREATE INDEX IF NOT EXISTS idx_trade_balance_save_id ON TradeBalance(save_id);
+CREATE INDEX IF NOT EXISTS idx_trade_balance_market ON TradeBalance(save_id, market_tag);
 
 -- Performance indexes (v1.6.0)
 -- idx_saves_in_game_date: lets MAX(in_game_date) use an index seek instead of full scan
@@ -384,7 +432,7 @@ def verify_schema(connection: sqlite3.Connection) -> bool:
 def migrate_schema(connection: sqlite3.Connection) -> None:
     """Apply incremental schema migrations to an existing database.
 
-    Each migration is idempotent — running it on a database that already has
+    Each migration is idempotent - running it on a database that already has
     the column is safe (the ALTER TABLE is silently ignored).
 
     Args:
@@ -401,7 +449,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     """)
 
     # -----------------------------------------------------------------------
-    # v1.2.0 — war naming / GP detection columns
+    # v1.2.0 - war naming / GP detection columns
     # -----------------------------------------------------------------------
     for sql in [
         "ALTER TABLE Wars ADD COLUMN global_avg_prestige REAL DEFAULT 0",
@@ -413,12 +461,12 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
             logger.info(f"Migration applied: {sql[:60]}...")
         except sqlite3.OperationalError as e:
             if "duplicate column" in str(e).lower():
-                pass  # column already exists — safe to ignore
+                pass  # column already exists - safe to ignore
             else:
                 raise
 
     # -----------------------------------------------------------------------
-    # v1.4.0 — battle extractor fix: new Battles columns
+    # v1.4.0 - battle extractor fix: new Battles columns
     # -----------------------------------------------------------------------
     for sql in [
         "ALTER TABLE Battles ADD COLUMN ended_on DATE",
@@ -437,7 +485,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
                 raise
 
     # -----------------------------------------------------------------------
-    # v1.3.0 — drop restrictive CHECK constraint on MetricTypes.name so new
+    # v1.3.0 - drop restrictive CHECK constraint on MetricTypes.name so new
     #           metric types can be inserted on existing databases.
     #
     # SQLite cannot ALTER a constraint; we must rebuild the table.
@@ -475,7 +523,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
         logger.info("Migration v1.3.0: MetricTypes rebuilt successfully.")
 
     # -----------------------------------------------------------------------
-    # v1.3.1 — rename military_size → army_personnel in MetricTypes.
+    # v1.3.1 - rename military_size → army_personnel in MetricTypes.
     # CountryMetrics rows reference metric_type_id (FK), so renaming the
     # MetricTypes row automatically applies to all historical data.
     # -----------------------------------------------------------------------
@@ -494,7 +542,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
         logger.info("Migration v1.3.1: renamed MetricTypes 'military_size' → 'army_personnel'.")
 
     # -----------------------------------------------------------------------
-    # v1.3.2 — insert new metric types (idempotent via INSERT OR IGNORE).
+    # v1.3.2 - insert new metric types (idempotent via INSERT OR IGNORE).
     # -----------------------------------------------------------------------
     new_metrics = [
         ('infamy',        'Infamy',        'points', 'National infamy / aggressiveness'),
@@ -510,7 +558,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     logger.info(f"Migration v1.3.2: ensured {len(new_metrics)} new metric types exist.")
 
     # -----------------------------------------------------------------------
-    # v1.3.3 — create InterestGroups table if it doesn't exist yet.
+    # v1.3.3 - create InterestGroups table if it doesn't exist yet.
     # -----------------------------------------------------------------------
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS InterestGroups (
@@ -521,6 +569,9 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
             clout REAL DEFAULT 0,
             approval REAL DEFAULT 0,
             membership INTEGER DEFAULT 0,
+            political_power REAL DEFAULT 0,
+            population REAL DEFAULT 0,
+            country_rank TEXT DEFAULT '',
             in_government BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (country_id) REFERENCES Countries(country_id) ON DELETE CASCADE,
@@ -537,7 +588,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     logger.info("Migration v1.3.3: InterestGroups table ensured.")
 
     # -----------------------------------------------------------------------
-    # v1.3.4 — remove positive_amount CHECK constraint from CountryMetrics
+    # v1.3.4 - remove positive_amount CHECK constraint from CountryMetrics
     #           so net treasury (money − debt) can be stored as a negative.
     # -----------------------------------------------------------------------
     cursor.execute(
@@ -583,7 +634,7 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
         logger.info("Migration v1.3.4: CountryMetrics rebuilt, indexes restored.")
 
     # -----------------------------------------------------------------------
-    # v1.3.5 — deactivate standalone 'debt' metric type (treasury now stores
+    # v1.3.5 - deactivate standalone 'debt' metric type (treasury now stores
     #           net = money − debt_principal, so 'debt' is redundant).
     # -----------------------------------------------------------------------
     cursor.execute(
@@ -682,9 +733,193 @@ def migrate_schema(connection: sqlite3.Connection) -> None:
     else:
         logger.debug("Migration v1.6.0 already applied, skipping.")
 
+    # -----------------------------------------------------------------------
+    # v1.7.0 - economic detail tables: GDP ownership per industry, GDP by good,
+    #           trade balance per market.  All three use CREATE TABLE IF NOT
+    #           EXISTS so the migration is safe to replay on any DB version.
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.7.0'")
+    if not cursor.fetchone():
+        cursor.executescript("""
+            CREATE TABLE IF NOT EXISTS GDPOwnership (
+                ownership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                save_id TEXT NOT NULL,
+                country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+                investor_tag TEXT NOT NULL CHECK (length(investor_tag) = 3),
+                building_group TEXT NOT NULL,
+                gdp_owned DECIMAL(20,4) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                UNIQUE(save_id, country_tag, investor_tag, building_group)
+            );
+
+            CREATE TABLE IF NOT EXISTS GDPByGood (
+                gdp_good_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                save_id TEXT NOT NULL,
+                country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+                good_name TEXT NOT NULL,
+                building_group TEXT NOT NULL,
+                revenue DECIMAL(20,4) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                UNIQUE(save_id, country_tag, good_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS TradeBalance (
+                trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                save_id TEXT NOT NULL,
+                market_tag TEXT NOT NULL CHECK (length(market_tag) = 3),
+                good_name TEXT NOT NULL,
+                net_quantity DECIMAL(15,4) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                UNIQUE(save_id, market_tag, good_name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_gdp_ownership_save_id ON GDPOwnership(save_id);
+            CREATE INDEX IF NOT EXISTS idx_gdp_ownership_country ON GDPOwnership(save_id, country_tag);
+            CREATE INDEX IF NOT EXISTS idx_gdp_ownership_investor ON GDPOwnership(save_id, investor_tag);
+            CREATE INDEX IF NOT EXISTS idx_gdp_by_good_save_id ON GDPByGood(save_id);
+            CREATE INDEX IF NOT EXISTS idx_gdp_by_good_country ON GDPByGood(save_id, country_tag);
+            CREATE INDEX IF NOT EXISTS idx_trade_balance_save_id ON TradeBalance(save_id);
+            CREATE INDEX IF NOT EXISTS idx_trade_balance_market ON TradeBalance(save_id, market_tag);
+        """)
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.7.0')")
+        logger.info("Migration v1.7.0: created GDPOwnership, GDPByGood, TradeBalance tables.")
+    else:
+        logger.debug("Migration v1.7.0 already applied, skipping.")
+
+    # -----------------------------------------------------------------------
+    # v1.8.0 - State-level production breakdown and good prices for trade
+    #           value calculation. Enables the Market tab per-state treemap.
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.8.0'")
+    if not cursor.fetchone():
+        cursor.executescript("""
+            CREATE TABLE IF NOT EXISTS StateProduction (
+                state_prod_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                save_id TEXT NOT NULL,
+                country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+                state_id TEXT NOT NULL,
+                state_name TEXT NOT NULL DEFAULT '',
+                good_name TEXT NOT NULL,
+                building_group TEXT NOT NULL,
+                revenue DECIMAL(20,4) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                UNIQUE(save_id, country_tag, state_id, good_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS GoodPrices (
+                price_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                save_id TEXT NOT NULL,
+                good_name TEXT NOT NULL,
+                price DECIMAL(15,4) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                UNIQUE(save_id, good_name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_state_prod_save_country ON StateProduction(save_id, country_tag);
+            CREATE INDEX IF NOT EXISTS idx_state_prod_save_state ON StateProduction(save_id, state_id);
+            CREATE INDEX IF NOT EXISTS idx_good_prices_save ON GoodPrices(save_id);
+        """)
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.8.0')")
+        logger.info("Migration v1.8.0: created StateProduction and GoodPrices tables.")
+    else:
+        logger.debug("Migration v1.8.0 already applied, skipping.")
+
+    # -----------------------------------------------------------------------
+    # v1.9.0 - add political_power and population to InterestGroups so the IG
+    #           view can show actual political power (political_strength) and
+    #           real member population (Σ pop_size × IG support fraction)
+    #           instead of the misleading pop-group count ('membership').
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.9.0'")
+    if not cursor.fetchone():
+        cursor.execute("PRAGMA table_info(InterestGroups)")
+        cols = {r[1] for r in cursor.fetchall()}
+        if 'political_power' not in cols:
+            cursor.execute("ALTER TABLE InterestGroups ADD COLUMN political_power REAL DEFAULT 0")
+        if 'population' not in cols:
+            cursor.execute("ALTER TABLE InterestGroups ADD COLUMN population REAL DEFAULT 0")
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.9.0')")
+        logger.info("Migration v1.9.0: added political_power and population to InterestGroups.")
+    else:
+        logger.debug("Migration v1.9.0 already applied, skipping.")
+
+    # -----------------------------------------------------------------------
+    # v1.9.1 - add country_rank to InterestGroups (game power rank of the
+    #           owning country, used for D99 power-status weighting).
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.9.1'")
+    if not cursor.fetchone():
+        cursor.execute("PRAGMA table_info(InterestGroups)")
+        cols = {r[1] for r in cursor.fetchall()}
+        if 'country_rank' not in cols:
+            cursor.execute("ALTER TABLE InterestGroups ADD COLUMN country_rank TEXT DEFAULT ''")
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.9.1')")
+        logger.info("Migration v1.9.1: added country_rank to InterestGroups.")
+    else:
+        logger.debug("Migration v1.9.1 already applied, skipping.")
+
+    # -----------------------------------------------------------------------
+    # v1.9.2 - add country_rank to Countries (per-country game power rank, for
+    #           display / sorting / future use), populated on save processing.
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.9.2'")
+    if not cursor.fetchone():
+        cursor.execute("PRAGMA table_info(Countries)")
+        cols = {r[1] for r in cursor.fetchall()}
+        if 'country_rank' not in cols:
+            cursor.execute("ALTER TABLE Countries ADD COLUMN country_rank TEXT DEFAULT ''")
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.9.2')")
+        logger.info("Migration v1.9.2: added country_rank to Countries.")
+    else:
+        logger.debug("Migration v1.9.2 already applied, skipping.")
+
+    # -----------------------------------------------------------------------
+    # v1.9.3 - rebuild CountryLaws as a per-save ACTIVE-law snapshot.
+    #   The old table stored every possible law (active + placeholder) each
+    #   save (~55k rows/save, 28M total) and derived "current laws" from an
+    #   unreliable activation_date, attributing laws countries never enacted.
+    #   New model: one row per (save, country, active law). Current laws = the
+    #   latest save's rows; the change-timeline is derived from the snapshots.
+    #   Existing (incorrect) law data is discarded and rebuilds as saves process.
+    # -----------------------------------------------------------------------
+    cursor.execute("SELECT 1 FROM SchemaMigrations WHERE migration_id = 'v1.9.3'")
+    if not cursor.fetchone():
+        cursor.executescript("""
+            DROP TABLE IF EXISTS CountryLaws;
+            CREATE TABLE CountryLaws (
+                law_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                save_id TEXT NOT NULL,
+                country_tag TEXT NOT NULL CHECK (length(country_tag) = 3),
+                playthrough_id TEXT NOT NULL,
+                in_game_date DATE NOT NULL,
+                law_key TEXT NOT NULL,
+                law_group TEXT NOT NULL,
+                law_label TEXT NOT NULL,
+                group_label TEXT NOT NULL,
+                group_color TEXT NOT NULL,
+                category TEXT NOT NULL,
+                activation_date DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (save_id) REFERENCES Saves(save_id) ON DELETE CASCADE,
+                UNIQUE(save_id, country_tag, law_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_country_laws_tag_pt ON CountryLaws(country_tag, playthrough_id);
+            CREATE INDEX IF NOT EXISTS idx_country_laws_save ON CountryLaws(save_id);
+            CREATE INDEX IF NOT EXISTS idx_country_laws_pt_date ON CountryLaws(playthrough_id, in_game_date);
+        """)
+        cursor.execute("INSERT OR IGNORE INTO SchemaMigrations (migration_id) VALUES ('v1.9.3')")
+        logger.info("Migration v1.9.3: rebuilt CountryLaws as a per-save active-law snapshot.")
+    else:
+        logger.debug("Migration v1.9.3 already applied, skipping.")
+
     connection.commit()
 
 
 def get_schema_version() -> str:
     """Get the current schema version."""
-    return "1.5.1"
+    return "1.9.3"

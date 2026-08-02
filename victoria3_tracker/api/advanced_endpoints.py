@@ -45,23 +45,27 @@ class AdvancedEndpoints:
                 countries = data['countries']
                 metric_name = data.get('metric', 'gdp')
                 limit = max(1, min(int(data.get('limit', 50)), 200))
+                playthrough_id = data.get('playthrough_id') or None
 
                 if not isinstance(countries, list) or not countries or len(countries) > 10:
                     abort(400)
-                
+
                 for country in countries:
                     if not country or len(country) != 3:
                         abort(400)
-                
+
                 comparison_data = {}
                 for country_tag in countries:
-                    metrics = self.data_access.get_country_metrics(country_tag, metric_name, limit)
+                    metrics = self.data_access.get_country_metrics(
+                        country_tag, metric_name, limit, playthrough_id=playthrough_id
+                    )
                     comparison_data[country_tag] = metrics
-                
+
                 return jsonify({
                     'metric_name': metric_name,
                     'countries': countries,
                     'data': comparison_data,
+                    'playthrough_id': playthrough_id,
                     'timestamp': datetime.now().isoformat()
                 })
                 

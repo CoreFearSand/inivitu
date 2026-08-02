@@ -14,6 +14,21 @@ from .manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
+# D99 power-status weight per country game rank. A country's contribution to the
+# global interest-group clout is its political power × this multiplier, so more
+# significant nations count for more. Tune here (no re-extraction needed).
+IG_RANK_WEIGHT: Dict[str, float] = {
+    'great_power': 8.0,
+    'major_power': 4.0,               # recognized major
+    'unrecognized_major_power': 3.0,
+    'minor_power': 2.0,               # recognized minor
+    'unrecognized_regional_power': 1.5,  # unrecognized minor
+    'insignificant_power': 1.0,
+    'unrecognized_power': 0.5,
+    'decentralized_power': 0.0,
+}
+IG_RANK_WEIGHT_DEFAULT = 1.0  # fallback for missing/blank rank
+
 # ---------------------------------------------------------------------------
 # CTE fragments for war name-generation and Great Power detection.
 # The alias names are stable API contract so front-end JS can rely on them.
@@ -169,48 +184,56 @@ class DataAccessLayer:
             if not countries_data:
                 logger.warning("No country data found in save")
                 return 0
-            
+
             player_country = save_data.get("meta_data", {}).get("name", "")
-            
+
+            # Country id → game power rank (great_power, minor_power, …).
+            from ..parser.utils import build_country_rank_map
+            rank_by_cid = build_country_rank_map(save_data)
+
             countries_to_insert = []
             for country_id, country_info in countries_data.items():
                 if not isinstance(country_info, dict):
                     logger.warning(f"Invalid country data for ID {country_id}: {type(country_info)}")
                     continue
-                
+
                 country_tag = country_info.get("definition")
                 if not country_tag:
                     logger.warning(f"No definition field found for country ID {country_id}")
                     continue
-                
+
                 if not isinstance(country_tag, str) or len(country_tag) != 3:
                     logger.warning(f"Invalid country tag: {country_tag}")
                     continue
-                
+
                 country_name = (
-                    country_info.get("name") or 
-                    country_info.get("localized_name") or 
-                    country_info.get("country_name") or 
+                    country_info.get("name") or
+                    country_info.get("localized_name") or
+                    country_info.get("country_name") or
                     country_tag
                 )
-                
+
                 is_player = (country_tag == player_country)
-                
+                country_rank = rank_by_cid.get(str(country_id), "")
+
                 countries_to_insert.append((
                     country_tag,
                     save_id,
                     country_name,
-                    is_player
+                    is_player,
+                    country_rank,
                 ))
-            
+
             if not countries_to_insert:
                 logger.warning("No valid countries to insert")
                 return 0
-            
+
             inserted_count = self.db.execute_many("""
-                INSERT OR IGNORE INTO Countries 
-                (country_tag, save_id, name, is_player_country)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO Countries
+                (country_tag, save_id, name, is_player_country, country_rank)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(country_tag, save_id) DO UPDATE SET
+                    country_rank = excluded.country_rank
             """, countries_to_insert)
             
             logger.info(f"Inserted {inserted_count} countries for save {save_id}")
@@ -353,7 +376,7 @@ class DataAccessLayer:
             # Power projection - placeholder (computed by MetricsExtractor)
             metrics['power_projection'] = None
 
-            # Infamy — explicit None check so 0.0 is stored correctly
+            # Infamy - explicit None check so 0.0 is stored correctly
             infamy_data = country_data.get("infamy")
             if isinstance(infamy_data, dict):
                 vals = infamy_data.get("channels", {}).get("0", {}).get("values", [])
@@ -373,7 +396,7 @@ class DataAccessLayer:
             )
             metrics['credit'] = float(credit_val) if credit_val is not None else None
 
-            # Prestige tier — computed post-extraction by MetricsExtractor; skip here
+            # Prestige tier - computed post-extraction by MetricsExtractor; skip here
             metrics['prestige_tier'] = None
             
         except Exception as e:
@@ -422,20 +445,22 @@ class DataAccessLayer:
             logger.error(f"Failed to get metric type IDs: {e}")
             return {}
     
-    def get_country_metrics(self, country_tag: str, metric_name: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_country_metrics(self, country_tag: str, metric_name: str, limit: int = 100,
+                            playthrough_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get metrics for a specific country and metric type.
-        
+
         Args:
             country_tag: Country tag (e.g., 'ENG')
             metric_name: Metric name (e.g., 'gdp')
             limit: Maximum number of records to return
-            
+            playthrough_id: Restrict to a single playthrough (all playthroughs if None)
+
         Returns:
             List of metric records
         """
         try:
-            results = self.db.execute_query("""
-                SELECT 
+            query = """
+                SELECT
                     cm.amount,
                     cm.recorded_at,
                     s.in_game_date,
@@ -446,12 +471,17 @@ class DataAccessLayer:
                 JOIN MetricTypes mt ON cm.metric_type_id = mt.metric_type_id
                 JOIN Saves s ON cm.save_id = s.save_id
                 WHERE c.country_tag = ? AND mt.name = ?
-                ORDER BY cm.recorded_at DESC
-                LIMIT ?
-            """, (country_tag, metric_name, limit))
-            
+            """
+            params = [country_tag, metric_name]
+            if playthrough_id:
+                query += " AND s.playthrough_id = ?"
+                params.append(playthrough_id)
+            query += " ORDER BY cm.recorded_at DESC LIMIT ?"
+            params.append(limit)
+
+            results = self.db.execute_query(query, tuple(params))
             return [dict(row) for row in results]
-            
+
         except Exception as e:
             logger.error(f"Failed to get country metrics: {e}")
             return []
@@ -675,9 +705,10 @@ class DataAccessLayer:
             return []
     
     # Metrics that are summed across countries vs. median-averaged (from CountryMetrics)
-    _GLOBAL_TOTAL_METRICS  = frozenset({'gdp', 'population', 'weekly_income', 'army_personnel'})
-    _GLOBAL_MEDIAN_METRICS = frozenset({'avgsol', 'money_holding', 'prestige', 'literacy',
-                                        'infamy', 'credit', 'prestige_tier'})
+    _GLOBAL_TOTAL_METRICS  = frozenset({'gdp', 'population', 'weekly_income', 'army_personnel',
+                                        'money_holding', 'credit'})
+    _GLOBAL_MEDIAN_METRICS = frozenset({'avgsol', 'prestige', 'literacy',
+                                        'infamy', 'prestige_tier'})
     # Metrics averaged directly from the InterestGroups table (not CountryMetrics)
     _GLOBAL_IG_AVG_METRICS = frozenset({'ig_avg_clout', 'ig_avg_approval'})
 
@@ -796,7 +827,7 @@ class DataAccessLayer:
         if metric_name not in all_tracked:
             return []
 
-        # IG average metrics have their own table — handle before the CountryMetrics path
+        # IG average metrics have their own table - handle before the CountryMetrics path
         if metric_name in self._GLOBAL_IG_AVG_METRICS:
             col = 'clout' if metric_name == 'ig_avg_clout' else 'approval'
             pt_filter = "WHERE s.playthrough_id = ?" if playthrough_id else ""
@@ -865,7 +896,7 @@ class DataAccessLayer:
         """Get list of processed save files.
 
         Uses aggregated JOINs instead of correlated subqueries so the query
-        scans each table once rather than N times — dramatically faster when
+        scans each table once rather than N times - dramatically faster when
         there are many saves.
 
         Args:
@@ -1028,7 +1059,7 @@ class DataAccessLayer:
 
                         # Populate global prestige stats for GP detection (set-once).
                         # Pre-fetch the latest prestige snapshot date in Python so we
-                        # pass it as a single parameter — avoids repeating the inner
+                        # pass it as a single parameter - avoids repeating the inner
                         # correlated subquery twice inside the UPDATE.
                         snap_row = cursor.execute("""
                             SELECT MAX(cm.recorded_at)
@@ -1161,6 +1192,9 @@ class DataAccessLayer:
                     ig.clout,
                     ig.approval,
                     ig.membership,
+                    getattr(ig, 'political_power', 0.0),
+                    getattr(ig, 'population', 0.0),
+                    getattr(ig, 'country_rank', ''),
                     int(ig.in_government),
                 ))
 
@@ -1169,13 +1203,17 @@ class DataAccessLayer:
 
             inserted = self.db.execute_many("""
                 INSERT INTO InterestGroups
-                    (country_id, save_id, ig_type, clout, approval, membership, in_government)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (country_id, save_id, ig_type, clout, approval, membership,
+                     political_power, population, country_rank, in_government)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(country_id, save_id, ig_type) DO UPDATE SET
-                    clout         = excluded.clout,
-                    approval      = excluded.approval,
-                    membership    = excluded.membership,
-                    in_government = excluded.in_government
+                    clout           = excluded.clout,
+                    approval        = excluded.approval,
+                    membership      = excluded.membership,
+                    political_power = excluded.political_power,
+                    population      = excluded.population,
+                    country_rank    = excluded.country_rank,
+                    in_government   = excluded.in_government
             """, rows)
 
             logger.info(f"Upserted {inserted} interest groups for save {save_id}")
@@ -1191,29 +1229,38 @@ class DataAccessLayer:
         save_id: str,
         playthrough_id: str,
     ) -> int:
-        """Insert or ignore law change history for a save.
+        """Store the ACTIVE-law snapshot for one save.
 
-        Uses INSERT OR IGNORE so re-processing the same save file is safe -
-        once a law change is recorded for (country_tag, playthrough_id, law_key,
-        activation_date) it is never overwritten.
+        One row per (save_id, country_tag, law_key). INSERT OR IGNORE keeps
+        re-processing the same save idempotent. Current laws are read from the
+        latest save; the change-timeline is derived from these snapshots.
 
         Args:
-            law_changes: List of LawChange objects from LawExtractor
-            save_id: Database save ID for provenance tracking
+            law_changes: active LawChange records from LawExtractor
+            save_id: Database save ID
             playthrough_id: Playthrough identifier
 
         Returns:
-            Number of rows inserted (0 if all already existed)
+            Number of rows inserted
         """
         try:
             if not law_changes:
                 return 0
 
+            date_rows = list(self.db.execute_query(
+                "SELECT in_game_date FROM Saves WHERE save_id = ?", (save_id,)
+            ))
+            in_game_date = date_rows[0]['in_game_date'] if date_rows else None
+            if not in_game_date:
+                logger.warning("insert_laws: no in_game_date for save %s", save_id)
+                return 0
+
             rows = [
                 (
+                    save_id,
                     c.country_tag,
                     playthrough_id,
-                    save_id,
+                    in_game_date,
                     c.law_key,
                     c.law_group,
                     c.law_label,
@@ -1221,25 +1268,22 @@ class DataAccessLayer:
                     c.group_color,
                     c.category,
                     c.activation_date,
-                    c.replaced_law,
-                    int(c.is_active),
                 )
                 for c in law_changes
             ]
 
             inserted = self.db.execute_many("""
                 INSERT OR IGNORE INTO CountryLaws
-                    (country_tag, playthrough_id, save_id, law_key, law_group,
-                     law_label, group_label, group_color, category,
-                     activation_date, replaced_law, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (save_id, country_tag, playthrough_id, in_game_date, law_key,
+                     law_group, law_label, group_label, group_color, category, activation_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, rows)
 
-            logger.info(f"Inserted {inserted} law changes for playthrough {playthrough_id}")
+            logger.info(f"Stored {inserted} active laws for save {save_id[:8]}")
             return inserted
 
         except Exception as e:
-            logger.error(f"Failed to insert law changes: {e}", exc_info=True)
+            logger.error(f"Failed to insert laws: {e}", exc_info=True)
             return 0
 
     def get_law_history(
@@ -1247,36 +1291,63 @@ class DataAccessLayer:
         country_tag: str,
         playthrough_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Return all law changes for a country, sorted chronologically.
+        """Law-change timeline for a country, derived from per-save active-law
+        snapshots: one entry each time a law group's active law changes.
+
+        The output shape matches the old change-log (so callers can still take
+        the latest entry per group for "current laws" and render a timeline),
+        but it now reflects only laws the country actually enacted.
 
         Args:
             country_tag: 3-letter country tag
             playthrough_id: Filter to a specific playthrough (recommended)
 
         Returns:
-            List of law change dicts sorted by activation_date ASC
+            List of law-change dicts sorted by activation_date ASC
         """
         try:
+            country_tag = country_tag.upper()
             if playthrough_id:
                 rows = self.db.execute_query("""
-                    SELECT law_key, law_group, law_label, group_label,
-                           group_color, category, activation_date,
-                           replaced_law, is_active
+                    SELECT in_game_date, law_key, law_group, law_label, group_label,
+                           group_color, category, activation_date
                     FROM CountryLaws
                     WHERE country_tag = ? AND playthrough_id = ?
-                    ORDER BY activation_date ASC, law_group ASC
+                    ORDER BY law_group ASC, in_game_date ASC
                 """, (country_tag, playthrough_id))
             else:
                 rows = self.db.execute_query("""
-                    SELECT law_key, law_group, law_label, group_label,
-                           group_color, category, activation_date,
-                           replaced_law, is_active
+                    SELECT in_game_date, law_key, law_group, law_label, group_label,
+                           group_color, category, activation_date
                     FROM CountryLaws
                     WHERE country_tag = ?
-                    ORDER BY activation_date ASC, law_group ASC
+                    ORDER BY law_group ASC, in_game_date ASC
                 """, (country_tag,))
 
-            return [dict(r) for r in rows]
+            # Collapse each group's chronological snapshots into change events.
+            result: List[Dict[str, Any]] = []
+            prev_group = None
+            prev_law = None
+            for r in rows:
+                g = r['law_group']
+                if g != prev_group:
+                    prev_group, prev_law = g, None
+                if r['law_key'] != prev_law:
+                    prev_law = r['law_key']
+                    result.append({
+                        'law_key': r['law_key'],
+                        'law_group': g,
+                        'law_label': r['law_label'],
+                        'group_label': r['group_label'],
+                        'group_color': r['group_color'],
+                        'category': r['category'],
+                        'activation_date': r['activation_date'] or r['in_game_date'],
+                        'replaced_law': None,
+                        'is_active': 1,
+                    })
+
+            result.sort(key=lambda x: (x['activation_date'] or '', x['law_group']))
+            return result
 
         except Exception as e:
             logger.error(f"Failed to get law history for {country_tag}: {e}")
@@ -1302,7 +1373,7 @@ class DataAccessLayer:
             if save_id:
                 results = self.db.execute_query("""
                     SELECT ig.ig_type, ig.clout, ig.approval, ig.membership,
-                           ig.in_government
+                           ig.political_power, ig.population, ig.in_government
                     FROM InterestGroups ig
                     JOIN Countries c ON ig.country_id = c.country_id
                     WHERE c.country_tag = ? AND ig.save_id = ?
@@ -1311,7 +1382,7 @@ class DataAccessLayer:
             elif playthrough_id:
                 results = self.db.execute_query("""
                     SELECT ig.ig_type, ig.clout, ig.approval, ig.membership,
-                           ig.in_government
+                           ig.political_power, ig.population, ig.in_government
                     FROM InterestGroups ig
                     JOIN Countries c ON ig.country_id = c.country_id
                     JOIN Saves s     ON ig.save_id    = s.save_id
@@ -1325,7 +1396,7 @@ class DataAccessLayer:
             else:
                 results = self.db.execute_query("""
                     SELECT ig.ig_type, ig.clout, ig.approval, ig.membership,
-                           ig.in_government
+                           ig.political_power, ig.population, ig.in_government
                     FROM InterestGroups ig
                     JOIN Countries c ON ig.country_id = c.country_id
                     WHERE c.country_tag = ?
@@ -1339,6 +1410,91 @@ class DataAccessLayer:
 
         except Exception as e:
             logger.error(f"Failed to get interest groups for {country_tag}: {e}")
+            return []
+
+    def get_global_interest_groups(
+        self,
+        playthrough_id: Optional[str] = None,
+        save_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """D99 global interest-group snapshot.
+
+        Global clout of an IG type = its share of worldwide political power,
+        with each country weighted by its POWER STATUS (IG_RANK_WEIGHT):
+            clout(T) = Σ_c w(c)·pp(c,T) / Σ_c Σ_T' w(c)·pp(c,T'),  w = rank weight.
+        Political-power weighting means small nations with high internal clout do
+        not dominate and politically-suppressed populations (Qing China) do not
+        skew results; the rank weight then scales each nation by its global
+        significance. Displayed political_power / population stay RAW (actual
+        worldwide totals); only clout is status-weighted.
+        """
+        try:
+            if not save_id:
+                if playthrough_id:
+                    row = self.db.execute_query("""
+                        SELECT s.save_id FROM Saves s
+                        WHERE s.playthrough_id = ?
+                          AND EXISTS (SELECT 1 FROM InterestGroups ig WHERE ig.save_id = s.save_id)
+                        ORDER BY s.in_game_date DESC LIMIT 1
+                    """, (playthrough_id,))
+                else:
+                    row = self.db.execute_query("""
+                        SELECT s.save_id FROM Saves s
+                        WHERE EXISTS (SELECT 1 FROM InterestGroups ig WHERE ig.save_id = s.save_id)
+                        ORDER BY s.in_game_date DESC LIMIT 1
+                    """, ())
+                row = list(row)
+                if not row:
+                    return []
+                save_id = row[0]['save_id']
+
+            # Aggregate per (ig_type, country_rank) so the rank weight can be
+            # applied per country tier in Python.
+            rows = self.db.execute_query("""
+                SELECT ig.ig_type,
+                       ig.country_rank,
+                       SUM(ig.political_power)                                        AS pp,
+                       SUM(ig.population)                                             AS pop,
+                       SUM(ig.political_power * ig.approval)                          AS appr_weighted,
+                       SUM(CASE WHEN ig.in_government THEN ig.political_power ELSE 0 END) AS gov_power,
+                       COUNT(*)                                                       AS country_count
+                FROM InterestGroups ig
+                WHERE ig.save_id = ?
+                GROUP BY ig.ig_type, ig.country_rank
+            """, (save_id,))
+
+            agg: Dict[str, Dict[str, float]] = {}
+            for r in rows:
+                d = dict(r)
+                t = d['ig_type']
+                w = IG_RANK_WEIGHT.get(d.get('country_rank') or '', IG_RANK_WEIGHT_DEFAULT)
+                a = agg.setdefault(t, {'pp': 0.0, 'weighted_pp': 0.0, 'pop': 0.0,
+                                       'appr_weighted': 0.0, 'gov_power': 0.0, 'country_count': 0})
+                pp = d['pp'] or 0.0
+                a['pp'] += pp
+                a['weighted_pp'] += pp * w
+                a['pop'] += d['pop'] or 0.0
+                a['appr_weighted'] += d['appr_weighted'] or 0.0
+                a['gov_power'] += d['gov_power'] or 0.0
+                a['country_count'] += d['country_count'] or 0
+
+            total_weighted = sum(a['weighted_pp'] for a in agg.values()) or 1.0
+            out = []
+            for t, a in agg.items():
+                out.append({
+                    'ig_type': t,
+                    'clout': a['weighted_pp'] / total_weighted,
+                    'political_power': a['pp'],
+                    'population': a['pop'],
+                    'approval': (a['appr_weighted'] / a['pp']) if a['pp'] else 0.0,
+                    'in_government': a['gov_power'] > 0.5 * a['pp'],
+                    'country_count': a['country_count'],
+                })
+            out.sort(key=lambda x: x['clout'], reverse=True)
+            return out
+
+        except Exception as e:
+            logger.error(f"Failed to get global interest groups: {e}")
             return []
 
     def get_interest_groups_history(
@@ -1782,7 +1938,97 @@ class DataAccessLayer:
             logger.error(f"Failed to get war participant countries: {e}", exc_info=True)
             return []
 
-    def log_processing_result(self, filename: str, status: str, save_id: Optional[str] = None, 
+    def insert_economic_data(
+        self,
+        gdp_by_good: List[Dict[str, Any]],
+        trade_balance: List[Dict[str, Any]],
+        gdp_ownership: List[Dict[str, Any]],
+        save_id: str,
+        state_production: Optional[List[Dict[str, Any]]] = None,
+        good_prices: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, int]:
+        """Insert GDP-by-good, trade balance, GDP ownership, state production, and prices.
+
+        Uses INSERT OR REPLACE so re-processing the same save is idempotent.
+        """
+        counts = {
+            "gdp_by_good": 0, "trade_balance": 0, "gdp_ownership": 0,
+            "state_production": 0, "good_prices": 0,
+        }
+        try:
+            if gdp_by_good:
+                rows = [
+                    (save_id, r["country_tag"], r["good_name"], r["building_group"], r["revenue"])
+                    for r in gdp_by_good
+                    if len(r.get("country_tag", "")) == 3
+                ]
+                if rows:
+                    counts["gdp_by_good"] = self.db.execute_many("""
+                        INSERT OR REPLACE INTO GDPByGood
+                            (save_id, country_tag, good_name, building_group, revenue)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, rows)
+
+            if trade_balance:
+                rows = [
+                    (save_id, r["market_tag"], r["good_name"], r["net_quantity"])
+                    for r in trade_balance
+                    if len(r.get("market_tag", "")) == 3
+                ]
+                if rows:
+                    counts["trade_balance"] = self.db.execute_many("""
+                        INSERT OR REPLACE INTO TradeBalance
+                            (save_id, market_tag, good_name, net_quantity)
+                        VALUES (?, ?, ?, ?)
+                    """, rows)
+
+            if gdp_ownership:
+                rows = [
+                    (save_id, r["country_tag"], r["investor_tag"], r["building_group"], r["gdp_owned"])
+                    for r in gdp_ownership
+                    if len(r.get("country_tag", "")) == 3 and len(r.get("investor_tag", "")) == 3
+                ]
+                if rows:
+                    counts["gdp_ownership"] = self.db.execute_many("""
+                        INSERT OR REPLACE INTO GDPOwnership
+                            (save_id, country_tag, investor_tag, building_group, gdp_owned)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, rows)
+
+            if state_production:
+                rows = [
+                    (save_id, r["country_tag"], r["state_id"], r["state_name"],
+                     r["good_name"], r["building_group"], r["revenue"])
+                    for r in state_production
+                    if len(r.get("country_tag", "")) == 3
+                ]
+                if rows:
+                    counts["state_production"] = self.db.execute_many("""
+                        INSERT OR REPLACE INTO StateProduction
+                            (save_id, country_tag, state_id, state_name,
+                             good_name, building_group, revenue)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, rows)
+
+            if good_prices:
+                rows = [(save_id, r["good_name"], r["price"]) for r in good_prices]
+                if rows:
+                    counts["good_prices"] = self.db.execute_many("""
+                        INSERT OR REPLACE INTO GoodPrices (save_id, good_name, price)
+                        VALUES (?, ?, ?)
+                    """, rows)
+
+            logger.info(
+                f"Economic data inserted for save {save_id}: "
+                f"{counts['gdp_by_good']} GDP-by-good, {counts['trade_balance']} trade, "
+                f"{counts['gdp_ownership']} ownership, {counts['state_production']} state-prod, "
+                f"{counts['good_prices']} prices."
+            )
+        except Exception as e:
+            logger.error(f"Failed to insert economic data: {e}", exc_info=True)
+        return counts
+
+    def log_processing_result(self, filename: str, status: str, save_id: Optional[str] = None,
                             error_message: Optional[str] = None, processing_time_ms: Optional[int] = None) -> None:
         """Log file processing result.
         

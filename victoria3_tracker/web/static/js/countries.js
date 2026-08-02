@@ -393,13 +393,16 @@ function updateChart(chartType, data, metric) {
                     ticks: {
                         maxTicksLimit: 8,
                         maxRotation: 30,
-                        // Chart.js passes the label text as `val` for category
-                        // scales (it calls getLabelForValue before invoking the
-                        // callback).  Use it directly rather than re-indexing
-                        // into chartLabels, then coerce to string as a safety net.
-                        callback: function(val) {
+                        // Chart.js category scale passes val as the numeric index
+                        // into the labels array (not the label text).  Look up the
+                        // date string via chartLabels[val], falling back to
+                        // chartLabels[index] for safety.
+                        callback: function(val, index) {
                             if (val == null) return '';
-                            return String(val).slice(0, 7);
+                            const label = typeof val === 'number'
+                                ? (chartLabels[val] ?? chartLabels[index] ?? '')
+                                : val;
+                            return String(label).slice(0, 7);
                         }
                     }
                 },
@@ -535,6 +538,18 @@ function handleTabChange(targetId) {
 }
 
 /**
+ * Format a large number compactly (2.4M, 1.0M, 850K, 1,234).
+ */
+function fmtBigNum(v) {
+    if (v == null) return '–';
+    const n = Math.abs(v);
+    if (n >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+    return Math.round(v).toLocaleString();
+}
+
+/**
  * Load interest groups for the current country
  */
 async function loadInterestGroups() {
@@ -542,7 +557,7 @@ async function loadInterestGroups() {
     if (!tableBody) return;
 
     try {
-        tableBody.innerHTML = `<tr><td colspan="5" class="text-center">
+        tableBody.innerHTML = `<tr><td colspan="6" class="text-center">
             <div class="spinner-border spinner-border-sm" role="status"></div> Loading…
         </td></tr>`;
 
@@ -557,7 +572,7 @@ async function loadInterestGroups() {
 
         const igs = data.interest_groups || [];
         if (!igs.length) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No interest group data available for this save.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No interest group data available for this save.</td></tr>';
             return;
         }
 
@@ -575,15 +590,16 @@ async function loadInterestGroups() {
                     <small class="text-muted">${ig.ig_type}</small></td>
                 <td>${govBadge}</td>
                 <td>${ig.clout != null ? (ig.clout * 100).toFixed(1) + '%' : '–'}</td>
+                <td>${ig.political_power != null ? fmtBigNum(ig.political_power) : '–'}</td>
+                <td>${ig.population != null ? fmtBigNum(ig.population) : '–'}</td>
                 <td class="${approvalClass}">${approvalStr}</td>
-                <td>${ig.membership != null ? ig.membership.toLocaleString() : '–'}</td>
             </tr>`;
         }).join('');
 
     } catch (error) {
         console.error('Error loading interest groups:', error);
         if (tableBody) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Failed to load interest group data.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Failed to load interest group data.</td></tr>';
         }
     }
 }

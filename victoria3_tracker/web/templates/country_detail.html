@@ -69,6 +69,17 @@
         border-radius: 8px;
         padding: 1rem;
     }
+    /* Economics tab */
+    .econ-panel {
+        position: sticky;
+        top: 80px;
+        max-height: calc(100vh - 140px);
+        overflow-y: auto;
+    }
+    .econ-flag {
+        width: 24px; height: 16px; object-fit: cover;
+        border: 1px solid #ccc; border-radius: 2px;
+    }
     /* Law Timeline */
     .law-timeline-wrap { position: relative; padding: 2.5rem 0 0.5rem; }
     .law-timeline-track { height: 6px; background: #dee2e6; border-radius: 3px; position: relative; }
@@ -282,6 +293,11 @@
                     <i class="fas fa-scroll"></i> Laws
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="market-tab" data-bs-toggle="tab" data-bs-target="#market-pane" type="button" role="tab">
+                    <i class="fas fa-coins"></i> Market
+                </button>
+            </li>
         </ul>
         
         <div class="tab-content" id="country-tab-content">
@@ -456,14 +472,15 @@
                                     <tr>
                                         <th>Interest Group</th>
                                         <th>Status</th>
-                                        <th>Clout</th>
+                                        <th title="Share of the country's political power">Clout</th>
+                                        <th title="Absolute political power (political strength)">Political Power</th>
+                                        <th title="Politically-active member population">Population</th>
                                         <th>Approval</th>
-                                        <th title="Number of pop units supporting this interest group">Pop Units</th>
                                     </tr>
                                 </thead>
                                 <tbody id="interest-groups-table-body">
                                     <tr>
-                                        <td colspan="5" class="text-center text-muted">
+                                        <td colspan="6" class="text-center text-muted">
                                             Select the Interest Groups tab to load data.
                                         </td>
                                     </tr>
@@ -484,6 +501,61 @@
                 </div>
             </div>
         </div>
+
+        <!-- ── Market tab ── -->
+        <div class="tab-pane fade" id="market-pane" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex align-items-center gap-3 flex-wrap">
+                        <h5 class="card-title mb-0"><i class="fas fa-exchange-alt me-1"></i> Market</h5>
+                        <div class="btn-group btn-group-sm" role="group" id="mkt-view-group">
+                            <button type="button" class="btn btn-outline-secondary active" data-view="production">Production</button>
+                            <button type="button" class="btn btn-outline-secondary" data-view="exports">Exports</button>
+                            <button type="button" class="btn btn-outline-secondary" data-view="imports">Imports</button>
+                        </div>
+                        <div class="btn-group btn-group-sm" role="group" id="mkt-metric-group" title="Size boxes by traded units or by £ value">
+                            <button type="button" class="btn btn-outline-primary" data-metric="units">Units</button>
+                            <button type="button" class="btn btn-outline-primary" data-metric="value">Value £</button>
+                        </div>
+                        <select class="form-select form-select-sm" id="mkt-state-select" style="max-width:220px;">
+                            <option value="">All States</option>
+                        </select>
+                        <span class="text-muted small ms-auto" id="mkt-date-label"></span>
+                    </div>
+                </div>
+                <div class="card-body p-3" style="min-height:480px; position:relative;">
+                    <div id="mkt-no-data" class="text-center text-muted py-5" style="display:none;">
+                        <i class="fas fa-exchange-alt fa-2x mb-2"></i>
+                        <p>No market data for this playthrough. Process a save to generate data.</p>
+                    </div>
+                    <div id="mkt-loading" class="text-center text-muted py-5" style="display:none;">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    </div>
+                    <div id="mkt-content" class="row g-3" style="display:none;">
+                        <!-- Left: production-over-time line chart (Production view only) -->
+                        <div class="col-lg-7" id="mkt-timeline-col" style="display:none;">
+                            <div class="fw-bold small text-muted text-uppercase mb-2" id="mkt-timeline-title">Production over time</div>
+                            <div id="mkt-timeline-nodata" class="text-center text-muted py-5" style="display:none;">
+                                <i class="fas fa-chart-line fa-2x mb-2"></i>
+                                <p class="small">No production history for this playthrough yet.</p>
+                            </div>
+                            <div id="mkt-timeline-wrap" style="position:relative; height:440px;">
+                                <canvas id="mkt-timeline-chart"></canvas>
+                            </div>
+                        </div>
+                        <!-- Right: current-snapshot treemap -->
+                        <div class="col-lg-5" id="mkt-treemap-col">
+                            <div id="mkt-total-label" class="text-center small text-muted mb-1 fw-bold"></div>
+                            <div id="mkt-cat-legend" class="d-flex flex-wrap justify-content-center gap-2 mb-2" style="font-size:11px;"></div>
+                            <div id="mkt-treemap-wrap" style="width:100%; height:440px; position:relative;">
+                                <svg id="mkt-treemap-svg" width="100%" height="440" style="display:block;"></svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 
@@ -627,6 +699,982 @@
             bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         }, 2500);
     });
+}());
+</script>
+<script>
+/* ── Shared good → category classification + category colours ──────────
+   Goods are coloured by ECONOMIC ROLE (not by producing building). Every
+   box also shows the good's icon + name, so colour never carries identity
+   alone. */
+window.CATEGORY_META = {
+    mined:      { label: 'Mined resources',      color: '#8a5a2b' },  /* brown  */
+    harvested:  { label: 'Harvested resources',  color: '#3f9e56' },  /* green  */
+    food:       { label: 'Raw food',             color: '#e0b52e' },  /* gold   */
+    industrial: { label: 'Industrial inputs',    color: '#3b74b0' },  /* blue   */
+    consumer:   { label: 'Consumer goods',       color: '#e07b3c' },  /* orange */
+    military:   { label: 'Military',             color: '#cf4038' },  /* red    */
+    services:   { label: 'Services & transport', color: '#8659b5' }   /* purple */
+};
+window.CATEGORY_ORDER = ['mined', 'harvested', 'food', 'industrial', 'consumer', 'military', 'services'];
+window.GOOD_CATEGORY = {
+    /* mined — extracted from the ground */
+    coal:'mined', iron:'mined', lead:'mined', sulfur:'mined', oil:'mined', gold:'mined',
+    /* harvested — grown/logged above ground, non-food */
+    wood:'harvested', hardwood:'harvested', rubber:'harvested', silk:'harvested',
+    dye:'harvested', tobacco:'harvested', opium:'harvested',
+    /* raw food */
+    grain:'food', fish:'food', meat:'food', fruit:'food', tea:'food', coffee:'food', sugar:'food',
+    /* industrial inputs */
+    fabric:'industrial', paper:'industrial', glass:'industrial', steel:'industrial',
+    tools:'industrial', engines:'industrial', explosives:'industrial', fertilizer:'industrial',
+    /* consumer goods */
+    groceries:'consumer', clothes:'consumer', furniture:'consumer', liquor:'consumer',
+    wine:'consumer', porcelain:'consumer', luxury_clothes:'consumer', luxury_furniture:'consumer',
+    fine_art:'consumer', automobiles:'consumer', telephones:'consumer', radios:'consumer',
+    /* military */
+    ammunition:'military', small_arms:'military', artillery:'military', tanks:'military',
+    aeroplanes:'military', manowars:'military', ironclads:'military',
+    /* services & transport */
+    services:'services', transportation:'services', electricity:'services',
+    merchant_marine:'services', clippers:'services', steamers:'services'
+};
+window.goodColor = function (name) {
+    var c = window.GOOD_CATEGORY[name];
+    return (c && window.CATEGORY_META[c]) ? window.CATEGORY_META[c].color : '#9aa0a6';
+};
+
+/* ── Economics tab: timeline chart + hover-date top-10 panel ── */
+(function () {
+    'use strict';
+
+    var TAG = window.countryData.tag;
+
+    var GROUP_COLORS = {
+        bg_agriculture:       '#1baf7a',
+        bg_ranching:          '#6bbf59',
+        bg_logging:           '#2d7a2d',
+        bg_whaling:           '#5ba7d4',
+        bg_mining:            '#eb6834',
+        bg_light_industry:    '#4a3aa7',
+        bg_heavy_industry:    '#e34948',
+        bg_urban_center:      '#3b7fd4',
+        bg_power:             '#f5c518',
+        bg_infrastructure:    '#6c757d',
+        bg_military:          '#8b1a1a',
+        bg_arts_institutions: '#9b59b6',
+        bg_government:        '#1a3a6b',
+        bg_financial:         '#c9a227',
+        bg_trade:             '#1abc9c',
+        bg_subsistence:       '#a0836a',
+        bg_monuments:         '#555555',
+        bg_unknown:           '#aaaaaa'
+    };
+
+    var econChart    = null;
+    var currentData  = null;  /* full timeline response */
+    var lastDateIdx  = -1;
+
+    var noDataEl    = document.getElementById('econ-no-data');
+    var chartWrap   = document.getElementById('econ-chart-wrap');
+    var chartCanvas = document.getElementById('econ-chart');
+    var topPanel    = document.getElementById('econ-top-panel');
+    var dateRangeEl = document.getElementById('econ-date-range');
+    var econTab     = document.getElementById('economics-tab');
+    var ptSelect    = document.getElementById('playthrough-select');
+
+    if (!econTab) return;
+
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function fmtRev(v) {
+        if (v >= 1e6) return '£' + (v/1e6).toFixed(1) + 'M';
+        if (v >= 1e3) return '£' + (v/1e3).toFixed(0) + 'K';
+        return '£' + Math.round(v).toLocaleString();
+    }
+    function prettyName(n) {
+        return n.replace(/_/g,' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+    }
+
+    var econLoaded = false;
+    econTab.addEventListener('click', function () {
+        if (!econLoaded) { econLoaded = true; loadTimeline(); }
+    });
+    if (ptSelect) {
+        ptSelect.addEventListener('change', function () {
+            if (econLoaded) loadTimeline();
+        });
+    }
+
+    function loadTimeline() {
+        var pt  = ptSelect ? ptSelect.value : '';
+        var url = '/api/economics/country/' + encodeURIComponent(TAG) + '/gdp-timeline';
+        if (pt) url += '?playthrough_id=' + encodeURIComponent(pt);
+
+        noDataEl.style.display = '';
+        chartWrap.style.display = 'none';
+        topPanel.innerHTML = '<div class="text-center text-muted py-5"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
+
+        fetch(url)
+            .then(function (r) { return r.json(); })
+            .then(renderAll)
+            .catch(function () {
+                noDataEl.style.display = '';
+                chartWrap.style.display = 'none';
+                topPanel.innerHTML = '<div class="text-center text-muted py-5"><p>Error loading data.</p></div>';
+            });
+    }
+
+    function renderAll(data) {
+        if (!data.dates || !data.dates.length || !data.goods || !data.goods.length) {
+            noDataEl.style.display = '';
+            chartWrap.style.display = 'none';
+            topPanel.innerHTML = '<div class="text-center text-muted py-5">'
+                + '<i class="fas fa-chart-line fa-2x mb-2"></i>'
+                + '<p class="small">No economic data for this playthrough.<br>Process a save file to generate data.</p></div>';
+            return;
+        }
+        currentData = data;
+        lastDateIdx = data.dates.length - 1;
+
+        noDataEl.style.display = 'none';
+        chartWrap.style.display = '';
+
+        if (dateRangeEl) {
+            dateRangeEl.textContent = data.dates[0] + ' – ' + data.latest_date;
+        }
+
+        renderTimeline(data);
+        renderTopPanel(data.dates.length - 1);   /* default to latest date */
+    }
+
+    function renderTimeline(data) {
+        /* Limit to top 15 goods by latest revenue to keep chart readable */
+        var goods = data.goods.slice(0, 15);
+
+        var datasets = goods.map(function (g) {
+            var color = window.goodColor(g.name);
+            return {
+                label:            prettyName(g.name),
+                data:             g.values,
+                borderColor:      color,
+                backgroundColor:  color + '22',
+                fill:             false,
+                tension:          0.35,
+                borderWidth:      2,
+                pointRadius:      data.dates.length > 8 ? 0 : 3,
+                pointHoverRadius: 5,
+                _goodName:        g.name
+            };
+        });
+
+        if (econChart) { econChart.destroy(); econChart = null; }
+
+        econChart = new Chart(chartCanvas, {
+            type: 'line',
+            data: { labels: data.dates, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: { boxWidth: 12, font: { size: 11 }, padding: 10 }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function (ctx) {
+                                return ' ' + ctx.dataset.label + ': ' + fmtRev(ctx.raw);
+                            },
+                            afterBody: function (items) {
+                                if (items.length > 0) {
+                                    var idx = items[0].dataIndex;
+                                    if (idx !== lastDateIdx) {
+                                        lastDateIdx = idx;
+                                        renderTopPanel(idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { maxTicksLimit: 8, maxRotation: 40, font: { size: 11 } },
+                        grid:  { color: 'rgba(0,0,0,0.05)' }
+                    },
+                    y: {
+                        title: { display: true, text: 'Annual revenue (£)' },
+                        ticks: {
+                            callback: function (v) {
+                                if (v >= 1e6) return (v/1e6).toFixed(1)+'M';
+                                if (v >= 1e3) return (v/1e3).toFixed(0)+'K';
+                                return v;
+                            }
+                        },
+                        grid: { color: 'rgba(0,0,0,0.06)' }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderTopPanel(dateIdx) {
+        if (!currentData) return;
+        var date  = currentData.dates[dateIdx];
+        var goods = currentData.goods;
+
+        /* collect revenue at this date index, sort descending, take top 10 */
+        var snapshot = goods.map(function (g) {
+            return { name: g.name, group: g.group, revenue: g.values[dateIdx] || 0 };
+        }).filter(function (g) { return g.revenue > 0; });
+        snapshot.sort(function (a, b) { return b.revenue - a.revenue; });
+
+        var top10 = snapshot.slice(0, 10);
+        var total = snapshot.reduce(function (s, g) { return s + g.revenue; }, 0);
+
+        var html = '<div class="fw-bold small text-muted text-uppercase mb-3">Top Goods — ' + escHtml(date) + '</div>';
+
+        top10.forEach(function (g) {
+            var pct   = total > 0 ? (g.revenue / total * 100).toFixed(1) : '0';
+            var color = window.goodColor(g.name);
+            var icon  = 'https://vic3.paradoxwikis.com/thumb.php?f=Goods_' + g.name + '.png&width=40';
+
+            html += '<div class="d-flex align-items-center gap-2 mb-3">'
+                + '<img src="' + escHtml(icon) + '" width="32" height="32" style="flex-shrink:0;image-rendering:auto;" onerror="this.style.visibility=\'hidden\'">'
+                + '<div class="flex-grow-1" style="min-width:0">'
+                +   '<div class="small fw-medium text-truncate">' + escHtml(prettyName(g.name)) + '</div>'
+                +   '<div class="d-flex align-items-center gap-2 mt-1">'
+                +     '<div class="progress flex-grow-1" style="height:4px;">'
+                +       '<div class="progress-bar" style="width:' + pct + '%;background:' + color + ';"></div>'
+                +     '</div>'
+                +     '<span class="small text-muted" style="white-space:nowrap">' + pct + '%</span>'
+                +   '</div>'
+                + '</div>'
+                + '<div class="text-end" style="min-width:52px">'
+                +   '<div class="small fw-bold">' + fmtRev(g.revenue) + '</div>'
+                + '</div>'
+                + '</div>';
+        });
+
+        topPanel.innerHTML = html;
+    }
+}());
+</script>
+<script>
+/* ── Market tab: squarified treemap (SVG) of production / exports / imports ── */
+(function () {
+    'use strict';
+
+    var TAG = window.countryData.tag;
+
+    var GROUP_COLORS = {
+        bg_agriculture:'#1baf7a', bg_ranching:'#6bbf59', bg_logging:'#2d7a2d',
+        bg_whaling:'#5ba7d4', bg_mining:'#eb6834', bg_light_industry:'#4a3aa7',
+        bg_heavy_industry:'#e34948', bg_urban_center:'#3b7fd4', bg_power:'#f5c518',
+        bg_infrastructure:'#6c757d', bg_military:'#8b1a1a',
+        bg_arts_institutions:'#9b59b6', bg_government:'#1a3a6b',
+        bg_financial:'#c9a227', bg_trade:'#1abc9c',
+        bg_subsistence:'#a0836a', bg_monuments:'#555555', bg_unknown:'#aaaaaa'
+    };
+
+    /* good_name → building_group (used to color imports/exports treemap) */
+    var GOOD_TO_GROUP = {
+        ammunition:'bg_heavy_industry', small_arms:'bg_heavy_industry', artillery:'bg_heavy_industry',
+        tanks:'bg_heavy_industry', aeroplanes:'bg_heavy_industry', manowars:'bg_heavy_industry',
+        ironclads:'bg_heavy_industry', grain:'bg_agriculture', fish:'bg_agriculture',
+        fabric:'bg_light_industry', wood:'bg_logging', groceries:'bg_light_industry',
+        clothes:'bg_light_industry', furniture:'bg_light_industry', paper:'bg_light_industry',
+        services:'bg_urban_center', transportation:'bg_infrastructure', electricity:'bg_power',
+        merchant_marine:'bg_infrastructure', clippers:'bg_heavy_industry', steamers:'bg_heavy_industry',
+        silk:'bg_agriculture', dye:'bg_agriculture', sulfur:'bg_mining', coal:'bg_mining',
+        iron:'bg_mining', lead:'bg_mining', hardwood:'bg_logging', rubber:'bg_agriculture',
+        oil:'bg_mining', engines:'bg_heavy_industry', steel:'bg_heavy_industry',
+        glass:'bg_light_industry', fertilizer:'bg_heavy_industry', tools:'bg_light_industry',
+        explosives:'bg_heavy_industry', porcelain:'bg_light_industry', meat:'bg_ranching',
+        fruit:'bg_agriculture', liquor:'bg_agriculture', wine:'bg_agriculture',
+        tea:'bg_agriculture', coffee:'bg_agriculture', sugar:'bg_agriculture',
+        tobacco:'bg_agriculture', opium:'bg_agriculture', automobiles:'bg_heavy_industry',
+        telephones:'bg_heavy_industry', radios:'bg_heavy_industry',
+        luxury_clothes:'bg_light_industry', luxury_furniture:'bg_light_industry',
+        gold:'bg_mining', fine_art:'bg_arts_institutions'
+    };
+
+    var marketTab   = document.getElementById('market-tab');
+    var viewGroup   = document.getElementById('mkt-view-group');
+    var metricGroup = document.getElementById('mkt-metric-group');
+    var stateSelect = document.getElementById('mkt-state-select');
+    var noDataEl    = document.getElementById('mkt-no-data');
+    var loadingEl   = document.getElementById('mkt-loading');
+    var contentEl   = document.getElementById('mkt-content');
+    var treemapCol  = document.getElementById('mkt-treemap-col');
+    var treeWrap    = document.getElementById('mkt-treemap-wrap');
+    var totalLabel  = document.getElementById('mkt-total-label');
+    var catLegend   = document.getElementById('mkt-cat-legend');
+    var svg         = document.getElementById('mkt-treemap-svg');
+    var dateLabel   = document.getElementById('mkt-date-label');
+    var ptSelect    = document.getElementById('playthrough-select');
+
+    /* Category colour legend (built once) */
+    if (catLegend && !catLegend.childNodes.length) {
+        window.CATEGORY_ORDER.forEach(function(key) {
+            var m = window.CATEGORY_META[key];
+            var item = document.createElement('span');
+            item.className = 'd-inline-flex align-items-center gap-1 text-muted';
+            item.innerHTML = '<span style="display:inline-block;width:11px;height:11px;border-radius:2px;'
+                + 'background:' + m.color + ';"></span>' + m.label;
+            catLegend.appendChild(item);
+        });
+    }
+
+    /* Production-over-time (left panel, Production view only) */
+    var timelineCol   = document.getElementById('mkt-timeline-col');
+    var tlTitle       = document.getElementById('mkt-timeline-title');
+    var tlWrap        = document.getElementById('mkt-timeline-wrap');
+    var tlNoData      = document.getElementById('mkt-timeline-nodata');
+    var tlCanvas      = document.getElementById('mkt-timeline-chart');
+
+    if (!marketTab) return;
+
+    var currentSaveId    = null;
+    var currentData      = null;  /* {production, exports, imports} */
+    var currentView      = 'production';
+    var mktLoaded        = false;
+    var mktTimelineChart   = null;
+    var currentMetric      = 'money';       /* 'money' (£) or 'quantity' (units) — effective for current view */
+    var metricOverride     = null;          /* null = per-view default; else 'value' | 'units' (user's choice) */
+    var hoverDateIdx       = -1;            /* last index handled while the cursor is on the chart */
+    var pinnedDate         = '';            /* date the treemap is pinned to ('' = latest); survives mouse-leave */
+    var defaultDateLabel   = '';            /* the latest-save date */
+    var prodTimelineData   = null;
+    var prodTimelineLoaded = false;
+    var tradeTimelineData  = null;
+    var tradeTimelineLoaded = false;
+
+    /* ── Helpers ─────────────────────────────────────────────────────── */
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function fmtVal(v) {
+        if (v >= 1e9) return '£' + (v/1e9).toFixed(2) + 'B';
+        if (v >= 1e6) return '£' + (v/1e6).toFixed(1) + 'M';
+        if (v >= 1e3) return '£' + (v/1e3).toFixed(0) + 'K';
+        return '£' + Math.round(v).toLocaleString();
+    }
+    function fmtQty(v) {
+        var n = Math.round(v * 10) / 10;
+        return (n % 1 === 0) ? n.toLocaleString() : n.toFixed(1);
+    }
+    /* Format a treemap value using the active metric (£ for production, units for trade). */
+    function fmtMetric(v) { return currentMetric === 'quantity' ? fmtQty(v) : fmtVal(v); }
+    function prettyName(n) {
+        return n.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+    }
+
+    /* ── Squarified treemap layout (Bruls/Huizing/van Wijk) ──────────────
+       Packs boxes as close to square as possible: each strip is laid along
+       the CURRENT shorter side of the remaining rectangle, and items are added
+       to a strip only while doing so lowers its worst aspect ratio. This gives
+       the varied, tidy box grid of the in-game market screen - for any number
+       of goods and any value distribution. */
+    function squarify(nodes, x, y, w, h) {
+        var rects = [];
+        var items = nodes.slice().filter(function(n){ return n.value > 0; })
+                          .sort(function(a,b){ return b.value - a.value; });
+        if (!items.length || w <= 0 || h <= 0) return rects;
+
+        var total = items.reduce(function(s,i){ return s + i.value; }, 0);
+        var scale = (w * h) / total;                 /* value → pixel area */
+        var areas = items.map(function(i){ return i.value * scale; });
+
+        var rx = x, ry = y, rw = w, rh = h;          /* remaining rectangle */
+        var row = [], rowAreas = [];
+
+        function worst(extraArea) {
+            var side = Math.min(rw, rh);
+            var s = 0, i;
+            for (i = 0; i < rowAreas.length; i++) s += rowAreas[i];
+            var mx = rowAreas.length ? rowAreas[0] : 0;
+            var mn = rowAreas.length ? rowAreas[rowAreas.length - 1] : Infinity;
+            if (extraArea != null) { s += extraArea; mx = Math.max(mx, extraArea); mn = Math.min(mn, extraArea); }
+            if (s <= 0 || mn <= 0) return Infinity;
+            return Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn));
+        }
+
+        function layoutRow() {
+            var s = 0, k;
+            for (k = 0; k < rowAreas.length; k++) s += rowAreas[k];
+            if (rw >= rh) {                           /* vertical strip on the left */
+                var stripW = s / rh, cy = ry;
+                for (k = 0; k < row.length; k++) {
+                    var ih = rowAreas[k] / stripW;
+                    rects.push({item: row[k], x: rx, y: cy, w: stripW, h: ih});
+                    cy += ih;
+                }
+                rx += stripW; rw -= stripW;
+            } else {                                  /* horizontal strip on top */
+                var stripH = s / rw, cx = rx;
+                for (k = 0; k < row.length; k++) {
+                    var iw = rowAreas[k] / stripH;
+                    rects.push({item: row[k], x: cx, y: ry, w: iw, h: stripH});
+                    cx += iw;
+                }
+                ry += stripH; rh -= stripH;
+            }
+            row = []; rowAreas = [];
+        }
+
+        for (var i = 0; i < items.length; i++) {
+            var a = areas[i];
+            if (!row.length || worst(a) <= worst(null)) {
+                row.push(items[i]); rowAreas.push(a);
+            } else {
+                layoutRow();
+                row.push(items[i]); rowAreas.push(a);
+            }
+        }
+        if (row.length) layoutRow();
+        return rects;
+    }
+
+    /* ── SVG render ─────────────────────────────────────────────────── */
+    var tooltip = null;
+
+    var svgNS = 'http://www.w3.org/2000/svg';
+
+    function addSheenDef(svgEl) {
+        /* One reusable top-light / bottom-shade gradient gives boxes the subtle
+           glossy panel look of the in-game market screen. */
+        var defs = document.createElementNS(svgNS, 'defs');
+        var grad = document.createElementNS(svgNS, 'linearGradient');
+        grad.setAttribute('id', 'mktSheen');
+        grad.setAttribute('x1', '0'); grad.setAttribute('y1', '0');
+        grad.setAttribute('x2', '0'); grad.setAttribute('y2', '1');
+        [['0%', '#ffffff', '0.28'], ['48%', '#ffffff', '0.04'],
+         ['100%', '#000000', '0.20']].forEach(function(s) {
+            var st = document.createElementNS(svgNS, 'stop');
+            st.setAttribute('offset', s[0]);
+            st.setAttribute('stop-color', s[1]);
+            st.setAttribute('stop-opacity', s[2]);
+            grad.appendChild(st);
+        });
+        defs.appendChild(grad);
+        svgEl.appendChild(defs);
+    }
+
+    function svgText(cx, y, txt, opts) {
+        var t = document.createElementNS(svgNS, 'text');
+        t.setAttribute('x', cx);
+        t.setAttribute('y', y);
+        t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('dominant-baseline', 'middle');
+        t.setAttribute('fill', opts.fill || 'white');
+        t.setAttribute('font-size', opts.size);
+        if (opts.weight) t.setAttribute('font-weight', opts.weight);
+        t.setAttribute('pointer-events', 'none');
+        t.setAttribute('style', 'text-shadow:0 1px 3px rgba(0,0,0,0.65)');
+        t.textContent = txt;
+        return t;
+    }
+
+    function renderTreemap(items) {
+        var svgEl = svg;
+        var W = svgEl.getBoundingClientRect().width || svgEl.parentElement.clientWidth || 800;
+        var H = 440;
+        svgEl.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+        var total = items.reduce(function(s,i){return s+i.value;},0);
+        if (total <= 0) { while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild); return; }
+
+        totalLabel.textContent = 'Total: ' + fmtMetric(total)
+            + (currentMetric === 'quantity' ? ' units' : '');
+
+        var rects = squarify(items, 0, 0, W, H);
+
+        while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+        addSheenDef(svgEl);
+
+        rects.forEach(function(r) {
+            var item = r.item;
+            var color = window.goodColor(item.name);
+            var pct   = (item.value / total * 100).toFixed(1);
+            var bw = Math.max(0, r.w - 2), bh = Math.max(0, r.h - 2);
+            var bx = r.x + 1, by = r.y + 1;
+
+            var g = document.createElementNS(svgNS, 'g');
+
+            var rect = document.createElementNS(svgNS, 'rect');
+            rect.setAttribute('x', bx); rect.setAttribute('y', by);
+            rect.setAttribute('width', bw); rect.setAttribute('height', bh);
+            rect.setAttribute('fill', color);
+            rect.setAttribute('rx', '2');
+            rect.setAttribute('stroke', 'rgba(0,0,0,0.30)');
+            rect.setAttribute('stroke-width', '1');
+            g.appendChild(rect);
+
+            var sheen = document.createElementNS(svgNS, 'rect');
+            sheen.setAttribute('x', bx); sheen.setAttribute('y', by);
+            sheen.setAttribute('width', bw); sheen.setAttribute('height', bh);
+            sheen.setAttribute('rx', '2');
+            sheen.setAttribute('fill', 'url(#mktSheen)');
+            sheen.setAttribute('pointer-events', 'none');
+            g.appendChild(sheen);
+
+            /* Progressive content: icon → name → value number → percent.
+               Include only what fits, then vertically centre the stack. */
+            var large    = r.w > 120 && r.h > 64;
+            var lineH    = large ? 16 : 14;
+            var nameFont = large ? 13 : 11;
+            var valFont  = large ? 15 : 12;
+            var iconSize = (r.w >= 84 && r.h >= 92) ? 34 : (r.w >= 60 && r.h >= 54) ? 26 : 0;
+            var iconGap  = iconSize > 0 ? 5 : 0;
+
+            var label = prettyName(item.name);
+            var lines = (label.length > 13 && r.w < 150) ? label.split(' ') : [label];
+            if (lines.length > 2) lines = [lines.slice(0, Math.ceil(lines.length/2)).join(' '),
+                                           lines.slice(Math.ceil(lines.length/2)).join(' ')];
+
+            var showName  = r.w > 48 && r.h > 34;
+            var showValue = r.w > 54 && r.h > 62;
+            var showPct   = r.w > 40 && r.h > 46;
+            if (!showName) lines = [];
+
+            var contentH = (iconSize + iconGap)
+                + (showName ? lines.length * lineH : 0)
+                + (showValue ? lineH : 0)
+                + (showPct ? lineH - 2 : 0);
+            var cursor = r.y + (r.h - contentH) / 2;
+            var cx = r.x + r.w / 2;
+
+            if (iconSize > 0) {
+                var imgEl = document.createElementNS(svgNS, 'image');
+                var iconUrl = 'https://vic3.paradoxwikis.com/thumb.php?f=Goods_' + item.name + '.png&width=' + iconSize;
+                imgEl.setAttribute('href', iconUrl);
+                imgEl.setAttributeNS('http://www.w3.org/1999/xlink', 'href', iconUrl);
+                imgEl.setAttribute('x', cx - iconSize / 2);
+                imgEl.setAttribute('y', cursor);
+                imgEl.setAttribute('width', iconSize);
+                imgEl.setAttribute('height', iconSize);
+                imgEl.setAttribute('pointer-events', 'none');
+                imgEl.addEventListener('error', function() { imgEl.style.display = 'none'; });
+                g.appendChild(imgEl);
+                cursor += iconSize + iconGap;
+            }
+
+            if (showName) {
+                lines.forEach(function(line) {
+                    g.appendChild(svgText(cx, cursor + lineH / 2, line,
+                        {size: nameFont, weight: 'bold'}));
+                    cursor += lineH;
+                });
+            }
+
+            if (showValue) {
+                var valTxt = (currentMetric === 'quantity')
+                    ? fmtQty(item.value) : fmtVal(item.value);
+                g.appendChild(svgText(cx, cursor + lineH / 2, valTxt,
+                    {size: valFont, weight: 'bold', fill: '#ffffff'}));
+                cursor += lineH;
+            }
+
+            if (showPct) {
+                g.appendChild(svgText(cx, cursor + (lineH - 2) / 2, pct + '%',
+                    {size: 10, fill: 'rgba(255,255,255,0.82)'}));
+            }
+
+            /* Hover */
+            g.style.cursor = 'pointer';
+            g.addEventListener('mouseenter', function(e) {
+                rect.setAttribute('stroke', '#ffffff');
+                rect.setAttribute('stroke-width', '2');
+                showTooltip(e, item, pct, total);
+            });
+            g.addEventListener('mousemove', function(e) { moveTooltip(e); });
+            g.addEventListener('mouseleave', function() {
+                rect.setAttribute('stroke', 'rgba(0,0,0,0.30)');
+                rect.setAttribute('stroke-width', '1');
+                hideTooltip();
+            });
+
+            svgEl.appendChild(g);
+        });
+    }
+
+    /* ── Tooltip ─────────────────────────────────────────────────────── */
+    function ensureTooltip() {
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.style.cssText = 'position:fixed;background:rgba(0,0,0,0.85);color:#fff;'
+                + 'padding:8px 12px;border-radius:6px;font-size:12px;pointer-events:none;'
+                + 'z-index:9999;display:none;max-width:200px;line-height:1.5;';
+            document.body.appendChild(tooltip);
+        }
+    }
+    function showTooltip(e, item, pct, total) {
+        ensureTooltip();
+        var icon = 'https://vic3.paradoxwikis.com/thumb.php?f=Goods_' + item.name + '.png&width=32';
+        var primary, secondary = '';
+        if (currentMetric === 'quantity') {
+            primary = fmtQty(item.value) + ' units';
+            if (item.money != null) secondary = '<br><span style="opacity:.6">≈ ' + fmtVal(item.money) + '</span>';
+        } else {
+            primary = fmtVal(item.value);
+            if (item.qty != null) secondary = '<br><span style="opacity:.6">' + fmtQty(item.qty) + ' units</span>';
+        }
+        tooltip.innerHTML = '<img src="' + escHtml(icon) + '" width="20" height="20" style="vertical-align:middle;margin-right:6px;" onerror="this.style.display=\'none\'">'
+            + '<strong>' + escHtml(prettyName(item.name)) + '</strong><br>'
+            + primary + ' &nbsp; <span style="opacity:.75">' + pct + '%</span>'
+            + secondary;
+        tooltip.style.display = 'block';
+        moveTooltip(e);
+    }
+    function moveTooltip(e) {
+        if (!tooltip) return;
+        tooltip.style.left = (e.clientX + 14) + 'px';
+        tooltip.style.top  = (e.clientY - 10) + 'px';
+    }
+    function hideTooltip() {
+        if (tooltip) tooltip.style.display = 'none';
+    }
+
+    /* ── Data loading ─────────────────────────────────────────────────── */
+    marketTab.addEventListener('click', function() {
+        if (!mktLoaded) { mktLoaded = true; loadMarketData(); }
+    });
+    if (ptSelect) {
+        ptSelect.addEventListener('change', function() {
+            if (mktLoaded) {
+                currentSaveId = null;
+                prodTimelineLoaded = false; prodTimelineData = null;
+                tradeTimelineLoaded = false; tradeTimelineData = null;
+                loadMarketData();
+            }
+        });
+    }
+
+    stateSelect.addEventListener('change', function() {
+        if (!currentSaveId) return;
+        var sid = stateSelect.value;
+        if (sid) {
+            loadStateProduction(sid);
+        } else {
+            showView(currentView);
+        }
+    });
+
+    viewGroup.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-view]');
+        if (!btn) return;
+        viewGroup.querySelectorAll('button').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentView = btn.getAttribute('data-view');
+        stateSelect.value = '';  /* reset state filter */
+        if (currentData) showView(currentView);
+    });
+
+    /* Metric toggle — 'value' (£) or 'units'. A null override means each view
+       uses its natural default (Production→value, Exports/Imports→units); once
+       the user clicks a button the choice sticks across views. */
+    function defaultMetricFor(view) { return view === 'production' ? 'value' : 'units'; }
+    function effectiveMetric(view)  { return metricOverride || defaultMetricFor(view); }
+    function syncMetricButtons(view) {
+        var eff = effectiveMetric(view);
+        metricGroup.querySelectorAll('button').forEach(function(b) {
+            b.classList.toggle('active', b.getAttribute('data-metric') === eff);
+        });
+    }
+    metricGroup.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-metric]');
+        if (!btn) return;
+        metricOverride = btn.getAttribute('data-metric');
+        if (stateSelect.value) { loadStateProduction(stateSelect.value); }
+        else if (currentData)  { showView(currentView); }
+    });
+
+    function loadMarketData() {
+        noDataEl.style.display  = 'none';
+        loadingEl.style.display  = '';
+        contentEl.style.display  = 'none';
+        pinnedDate = '';            /* opening / reloading defaults to the latest date */
+        hoverDateIdx = -1;
+
+        var pt  = ptSelect ? ptSelect.value : '';
+        var url = '/api/economics/country/' + encodeURIComponent(TAG) + '/market-data';
+        if (pt) url += '?playthrough_id=' + encodeURIComponent(pt);
+
+        fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loadingEl.style.display = 'none';
+                if (!data.save_id || (!data.production.length && !data.exports.length && !data.imports.length)) {
+                    noDataEl.style.display = '';
+                    return;
+                }
+                currentSaveId = data.save_id;
+                currentData   = data;
+                defaultDateLabel = data.in_game_date || '';
+                if (dateLabel) dateLabel.textContent = defaultDateLabel;
+                contentEl.style.display = '';
+                ensureTimelines();
+                loadStateList(data.save_id);
+                showView(currentView);
+            })
+            .catch(function() {
+                loadingEl.style.display = 'none';
+                noDataEl.style.display  = '';
+            });
+    }
+
+    /* ── Timeline (left panel) ────────────────────────────────────────────
+       Production view uses the gdp-timeline endpoint (revenue £); Exports/
+       Imports use the trade-timeline endpoint (units traded). Both datasets
+       are fetched once when the Market tab loads, then rendered per view. */
+    function ensureTimelines() {
+        var pt = ptSelect ? ptSelect.value : '';
+        var q  = pt ? ('?playthrough_id=' + encodeURIComponent(pt)) : '';
+
+        if (!prodTimelineLoaded) {
+            prodTimelineLoaded = true;
+            fetch('/api/economics/country/' + encodeURIComponent(TAG) + '/gdp-timeline' + q)
+                .then(function(r) { return r.json(); })
+                .then(function(d) { prodTimelineData = d; if (currentView === 'production') renderTimelineForView('production'); })
+                .catch(function() { if (currentView === 'production') { tlNoData.style.display = ''; tlWrap.style.display = 'none'; } });
+        }
+        if (!tradeTimelineLoaded) {
+            tradeTimelineLoaded = true;
+            fetch('/api/economics/country/' + encodeURIComponent(TAG) + '/trade-timeline' + q)
+                .then(function(r) { return r.json(); })
+                .then(function(d) { tradeTimelineData = d; if (currentView === 'exports' || currentView === 'imports') renderTimelineForView(currentView); })
+                .catch(function() { if (currentView !== 'production') { tlNoData.style.display = ''; tlWrap.style.display = 'none'; } });
+        }
+    }
+
+    function renderTimelineForView(view) {
+        if (tlTitle) {
+            tlTitle.textContent = (view === 'exports') ? 'Exports over time'
+                                : (view === 'imports') ? 'Imports over time'
+                                : 'Production over time';
+        }
+        var wantMoney = (effectiveMetric(view) === 'value');
+        var dates, goods, colorFn, fmtFn, yTitle, seriesKey;
+        if (view === 'production') {
+            if (!prodTimelineData) { blankTimeline(); return; }
+            dates = prodTimelineData.dates; goods = prodTimelineData.goods;
+            colorFn = function(g) { return window.goodColor(g.name); };
+            fmtFn = wantMoney ? fmtVal : fmtQty;
+            yTitle = wantMoney ? 'Annual revenue (£)' : 'Annual units produced';
+            seriesKey = wantMoney ? 'values' : 'quantities';
+        } else {
+            if (!tradeTimelineData) { blankTimeline(); return; }
+            dates = tradeTimelineData.dates;
+            goods = (view === 'exports') ? tradeTimelineData.exports : tradeTimelineData.imports;
+            colorFn = function(g) { return window.goodColor(g.name); };
+            fmtFn = wantMoney ? fmtVal : fmtQty;
+            yTitle = wantMoney ? 'Trade value (£)' : 'Units traded';
+            seriesKey = wantMoney ? 'money' : 'values';
+        }
+
+        if (!dates || !dates.length || !goods || !goods.length) {
+            if (mktTimelineChart) { mktTimelineChart.destroy(); mktTimelineChart = null; }
+            tlNoData.style.display = ''; tlWrap.style.display = 'none';
+            return;
+        }
+        tlNoData.style.display = 'none'; tlWrap.style.display = '';
+
+        var top = goods.slice(0, 15);
+        var datasets = top.map(function(g) {
+            var color = colorFn(g);
+            return {
+                label:            prettyName(g.name),
+                data:             g[seriesKey] || g.values,
+                borderColor:      color,
+                backgroundColor:  color + '22',
+                fill:             false,
+                tension:          0.35,
+                borderWidth:      2,
+                pointRadius:      dates.length > 8 ? 0 : 3,
+                pointHoverRadius: 5
+            };
+        });
+
+        if (mktTimelineChart) { mktTimelineChart.destroy(); mktTimelineChart = null; }
+        mktTimelineChart = new Chart(tlCanvas, {
+            type: 'line',
+            data: { labels: dates, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                /* Hovering a date re-draws the treemap for THAT date. */
+                onHover: function(evt, els) {
+                    if (els && els.length) {
+                        var idx = els[0].index;
+                        if (idx !== hoverDateIdx) { hoverDateIdx = idx; renderTreemapForIdx(currentView, idx, true); }
+                    }
+                },
+                plugins: {
+                    legend: { display: true, position: 'bottom',
+                              labels: { boxWidth: 12, font: { size: 11 }, padding: 8 } },
+                    tooltip: { callbacks: {
+                        label: function(ctx) { return ' ' + ctx.dataset.label + ': ' + fmtFn(ctx.raw); }
+                    } }
+                },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 8, maxRotation: 40, font: { size: 11 } },
+                         grid: { color: 'rgba(0,0,0,0.05)' } },
+                    y: { title: { display: true, text: yTitle },
+                         ticks: { callback: function(v) { return fmtFn(v); } },
+                         grid: { color: 'rgba(0,0,0,0.06)' } }
+                }
+            }
+        });
+    }
+
+    function blankTimeline() {
+        /* Data not fetched yet — leave the panel blank; the fetch callback
+           re-renders once it arrives. */
+        if (mktTimelineChart) { mktTimelineChart.destroy(); mktTimelineChart = null; }
+        tlNoData.style.display = 'none'; tlWrap.style.display = '';
+    }
+
+    function loadStateList(saveId) {
+        fetch('/api/economics/country/' + encodeURIComponent(TAG)
+              + '/state-list?save_id=' + encodeURIComponent(saveId))
+            .then(function(r) { return r.json(); })
+            .then(function(states) {
+                stateSelect.innerHTML = '<option value="">All States</option>'
+                    + states.map(function(s) {
+                        return '<option value="' + escHtml(s.state_id) + '">' + escHtml(s.state_name) + '</option>';
+                    }).join('');
+            });
+    }
+
+    function loadStateProduction(stateId) {
+        fetch('/api/economics/country/' + encodeURIComponent(TAG)
+              + '/state-production?save_id=' + encodeURIComponent(currentSaveId)
+              + '&state_id=' + encodeURIComponent(stateId))
+            .then(function(r) { return r.json(); })
+            .then(function(rows) {
+                /* Per-state breakdown honours the Units/Value toggle too. */
+                currentMetric = (effectiveMetric('production') === 'value') ? 'money' : 'quantity';
+                syncMetricButtons('production');
+                var items = rows.map(function(r) {
+                    return {name: r.good_name, group: r.building_group,
+                            qty: r.quantity || 0, money: r.revenue || 0,
+                            value: (currentMetric === 'quantity') ? (r.quantity || 0) : (r.revenue || 0)};
+                }).filter(function(i) { return i.value > 0; });
+                treeWrap.style.display = '';
+                renderTreemap(items);
+            });
+    }
+
+    /* value = active metric (qty | money); keeps qty & money for the tooltip. */
+    function metricItems(raw) {
+        return raw.map(function(r) {
+            return {name: r.name, group: r.group, qty: r.qty, money: r.money,
+                    value: (currentMetric === 'quantity') ? r.qty : r.money};
+        }).filter(function(i) { return i.value > 0; });
+    }
+
+    /* Treemap for the LATEST save snapshot (market-data). */
+    function renderLatestTreemap() {
+        var raw = [];
+        if (currentView === 'production' && currentData) {
+            raw = currentData.production.map(function(r) {
+                return {name: r.good_name, group: r.building_group,
+                        qty: r.quantity || 0, money: r.revenue || 0};
+            });
+        } else if (currentView === 'exports' && currentData) {
+            raw = currentData.exports.map(function(r) {
+                return {name: r.good_name, group: GOOD_TO_GROUP[r.good_name] || 'bg_unknown',
+                        qty: r.net_quantity || 0, money: r.value || 0};
+            });
+        } else if (currentView === 'imports' && currentData) {
+            raw = currentData.imports.map(function(r) {
+                return {name: r.good_name, group: GOOD_TO_GROUP[r.good_name] || 'bg_unknown',
+                        qty: r.net_quantity || 0, money: r.value || 0};
+            });
+        }
+        var items = metricItems(raw);
+        if (dateLabel) dateLabel.textContent = defaultDateLabel;
+        if (!items.length) {
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+            totalLabel.textContent = 'No ' + currentView + ' data for this save.';
+            return;
+        }
+        renderTreemap(items);
+    }
+
+    function viewDates(view) {
+        return (view === 'production')
+            ? (prodTimelineData && prodTimelineData.dates)
+            : (tradeTimelineData && tradeTimelineData.dates);
+    }
+
+    /* Treemap for a specific timeline date index. Reads the already-fetched
+       series — no extra request. `hovering` only affects the label. Disabled
+       while a state filter is active (we have no per-state history). */
+    function renderTreemapForIdx(view, idx, hovering) {
+        if (stateSelect.value) return;
+        var dates = viewDates(view), raw = [];
+        if (!dates || idx == null || idx < 0 || idx >= dates.length) return;
+        if (view === 'production') {
+            raw = (prodTimelineData.goods || []).map(function(g) {
+                return {name: g.name, group: g.group,
+                        qty: (g.quantities || [])[idx] || 0, money: (g.values || [])[idx] || 0};
+            });
+        } else {
+            var arr = (view === 'exports') ? tradeTimelineData.exports : tradeTimelineData.imports;
+            raw = (arr || []).map(function(g) {
+                return {name: g.name, group: GOOD_TO_GROUP[g.name] || 'bg_unknown',
+                        qty: (g.values || [])[idx] || 0, money: (g.money || [])[idx] || 0};
+            });
+        }
+        pinnedDate = dates[idx];
+        var isLatest = (idx === dates.length - 1);
+        if (dateLabel) dateLabel.textContent = dates[idx] + (hovering && !isLatest ? '  ·  hovering' : '');
+
+        var items = metricItems(raw);
+        if (!items.length) {
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+            totalLabel.textContent = 'No ' + view + ' data for ' + dates[idx] + '.';
+            return;
+        }
+        renderTreemap(items);
+    }
+
+    /* The treemap STAYS on the last hovered date after the cursor leaves —
+       we just drop the "hovering" tag from the label. */
+    tlCanvas.addEventListener('mouseleave', function() {
+        hoverDateIdx = -1;
+        if (!stateSelect.value && pinnedDate && dateLabel) dateLabel.textContent = pinnedDate;
+    });
+
+    function showView(view) {
+        /* Every view has the timeline on the left and the treemap on the right. */
+        timelineCol.style.display = '';
+        treemapCol.className       = 'col-lg-5';
+
+        /* Effective metric decides how boxes are sized: 'quantity' (units) or
+           'money' (£). Default is units for trade (matches the in-game screen,
+           so cheap high-volume goods like sugar read big) and £ for production;
+           the Units/Value toggle overrides. */
+        currentMetric = (effectiveMetric(view) === 'value') ? 'money' : 'quantity';
+        syncMetricButtons(view);
+        renderTimelineForView(view);
+
+        /* Keep the pinned date across view / metric changes; fall back to latest. */
+        var dates = viewDates(view);
+        var idx = (pinnedDate && dates) ? dates.indexOf(pinnedDate) : -1;
+        if (idx >= 0) renderTreemapForIdx(view, idx, false);
+        else renderLatestTreemap();
+    }
 }());
 </script>
 {% endblock %}
