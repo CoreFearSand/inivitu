@@ -141,10 +141,6 @@ inivitu/
 ├── README.md
 ├── .gitignore
 │
-├── tests/                            # pytest suite
-│   ├── test_country_bugs_exploration.py
-│   └── test_country_preservation.py
-│
 └── victoria3_tracker/                # Core Python package
     ├── main.py                       # App orchestrator (monitor + web + processing)
     ├── config.py                     # Config loading & validation (ConfigManager)
